@@ -1,0 +1,29 @@
+# Fly.io app configuration. `fly launch` will ask you to confirm/rename the app and pick a
+# region the first time you run it — this file just gives it sensible starting values.
+# Real secrets (JWT_SECRET) are NOT set here — see DEPLOY.md, they're set with `fly secrets set`
+# instead, which Fly stores encrypted rather than in this plain-text file.
+
+app = "daily-scrum-monitoring"      # must be globally unique on Fly — change if it's taken
+primary_region = "sin"              # pick whichever Fly region (`fly platform regions`) is closest to your team
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "4000"
+  DB_PATH = "/data/scrum.db"
+
+[[mounts]]
+  source = "scrum_data"              # the persistent volume — created once with `fly volumes create`
+  destination = "/data"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = false         # keep it running 24/7 instead of sleeping between requests
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+/* Maven Pro — Solidpro's official body/document typeface (Brand Manual §1, §4) */
+@font-face {
+  font-family: 'Maven Pro';
+  src: url('./assets/fonts/MavenPro-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Maven Pro';
+  src: url('./assets/fonts/MavenPro-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Maven Pro';
+  src: url('./assets/fonts/MavenPro-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Maven Pro';
+  src: url('./assets/fonts/MavenPro-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: 'Maven Pro', 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+
+  /* Solidpro Primary Blue #16469D — dominant identity colour (70% weight) */
+  --color-brand-50: #eef2fa;
+  --color-brand-100: #dbe4f4;
+  --color-brand-200: #b6c9e9;
+  --color-brand-300: #8ba9db;
+  --color-brand-400: #5a80c9;
+  --color-brand-500: #2f5bb3;
+  --color-brand-600: #16469d;
+  --color-brand-700: #123a82;
+  --color-brand-800: #0f2f68;
+  --color-brand-900: #0b2450;
+  --color-brand-950: #071733;
+
+  /* Solidpro Secondary Red #E01A22 — alerts / key actions (20% weight) */
+  --color-accent-50: #fdeced;
+  --color-accent-100: #fbd6d7;
+  --color-accent-200: #f6adb0;
+  --color-accent-300: #f07f83;
+  --color-accent-400: #ea5559;
+  --color-accent-500: #e01a22;
+  --color-accent-600: #c2131a;
+  --color-accent-700: #9c1015;
+  --color-accent-800: #780c10;
+  --color-accent-900: #54080b;
+
+  /* Solidpro Tertiary Grey #939597 — supporting information (10% weight) */
+  --color-grey-50: #f7f7f8;
+  --color-grey-100: #eeeeef;
+  --color-grey-200: #dddedf;
+  --color-grey-300: #c5c6c8;
+  --color-grey-400: #adafb1;
+  --color-grey-500: #939597;
+  --color-grey-600: #78797b;
+  --color-grey-700: #5f6062;
+  --color-grey-800: #47484a;
+  --color-grey-900: #2f3031;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-grey-50);
+  font-family: var(--font-sans);
+}
+
+/* Subtle motion primitives shared across the app — kept short/purposeful, never looping indefinitely
+   unless explicitly ambient (float). A livelier "spring" easing complements the plain ease-out fades
+   for moments that deserve more energy — celebratory pop-ins, success states. */
+:root {
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes confetti-burst {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--tx, 0), var(--ty, -40px)) scale(0); opacity: 0; }
+}
+.animate-fade-in-up { animation: fade-in-up 0.35s ease-out both; }
+.animate-fade-out { animation: fade-in-up 0.18s ease-in reverse both; }
+.animate-scale-in { animation: scale-in 0.2s ease-out both; }
+.animate-scale-out { animation: scale-in 0.18s ease-in reverse both; }
+.animate-pop-in { animation: pop-in 0.5s var(--ease-spring) both; }
+.animate-float { animation: float 6s ease-in-out infinite; }
+.animate-confetti { animation: confetti-burst 0.7s ease-out both; }
+.animate-shimmer {
+  background: linear-gradient(90deg, var(--color-grey-100) 25%, var(--color-grey-200) 37%, var(--color-grey-100) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* Tactile press feedback for any clickable control — not just <Button>. */
+.press-scale { transition: transform 150ms ease-out; }
+.press-scale:active { transform: scale(0.97); }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up, .animate-fade-out, .animate-scale-in, .animate-scale-out, .animate-shimmer,
+  .animate-pop-in, .animate-float, .animate-confetti { animation: none; }
+  .press-scale:active { transform: none; }
+}

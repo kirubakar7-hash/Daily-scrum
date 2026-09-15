@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Real database files and backups — never committed, contains real people's data
+server/data/
+backups/
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets — never committed
+.env
+.env.local
+server/.env
+
+# Local Claude Code settings
+.claude/
+
+# Editor/OS
+.DS_Store
+*.log

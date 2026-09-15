@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+server/data
+server/backups
+server/server.log
+**/.env
+.git
+test_ids.txt
