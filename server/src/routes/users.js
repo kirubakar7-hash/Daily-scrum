@@ -49,7 +49,7 @@ router.patch('/:id', requireRole('super_admin', 'admin'), (req, res) => {
   const before = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'User not found.' });
 
-  const { full_name, role, team_id, job_title, is_active, reason } = req.body || {};
+  const { full_name, email, role, team_id, job_title, is_active, reason } = req.body || {};
 
   const roleChanging = role !== undefined && role !== before.role;
   const deactivating = is_active !== undefined && !is_active && before.is_active;
@@ -65,8 +65,17 @@ router.patch('/:id', requireRole('super_admin', 'admin'), (req, res) => {
   }
   if (roleChanging && !ROLE_LABELS[role]) return res.status(400).json({ error: 'Invalid role.' });
 
+  let normalizedEmail = before.email;
+  if (email !== undefined) {
+    normalizedEmail = email.trim();
+    if (!normalizedEmail) return res.status(400).json({ error: 'Email is required.' });
+    const existing = db.prepare('SELECT id FROM users WHERE lower(email) = lower(?) AND id != ?').get(normalizedEmail, req.params.id);
+    if (existing) return res.status(400).json({ error: 'A user with that email already exists.' });
+  }
+
   const after = {
     full_name: full_name !== undefined ? full_name.trim() : before.full_name,
+    email: normalizedEmail,
     role: role !== undefined ? role : before.role,
     team_id: team_id !== undefined ? team_id : before.team_id,
     job_title: job_title !== undefined ? job_title : before.job_title,
@@ -74,9 +83,9 @@ router.patch('/:id', requireRole('super_admin', 'admin'), (req, res) => {
   };
 
   db.prepare(`
-    UPDATE users SET full_name=?, role=?, team_id=?, job_title=?, is_active=?, updated_at=datetime('now'), updated_by=?
+    UPDATE users SET full_name=?, email=?, role=?, team_id=?, job_title=?, is_active=?, updated_at=datetime('now'), updated_by=?
     WHERE id=?
-  `).run(after.full_name, after.role, after.team_id, after.job_title, after.is_active, req.user.id, req.params.id);
+  `).run(after.full_name, after.email, after.role, after.team_id, after.job_title, after.is_active, req.user.id, req.params.id);
 
   auditDiff({ tableName: 'users', recordId: req.params.id, before, after, changedBy: req.user.id, changedByName: req.user.full_name, reason });
   res.json({ user: sanitize(db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)) });

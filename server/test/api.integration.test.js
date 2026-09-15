@@ -198,6 +198,27 @@ test('auth — self-service change-password works for any role, rejects a wrong 
   assert.equal(status, 200, 'the new password must work');
 });
 
+test('users — an admin can change a user\'s email, but not to one already in use', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+
+  const changed = await fetch(`${baseUrl}/api/users/${ids.employeeId}`, {
+    method: 'PATCH', headers: authed(saLogin.token), body: JSON.stringify({ email: 'employee-renamed@test.local' }),
+  });
+  assert.equal(changed.status, 200);
+  const { user } = await changed.json();
+  assert.equal(user.email, 'employee-renamed@test.local');
+
+  const duplicate = await fetch(`${baseUrl}/api/users/${ids.adminId}`, {
+    method: 'PATCH', headers: authed(saLogin.token), body: JSON.stringify({ email: 'employee-renamed@test.local' }),
+  });
+  assert.equal(duplicate.status, 400, 'changing to an email already used by another account must be rejected');
+
+  // Restore, so later tests that log in as 'employee@test.local' keep working.
+  await fetch(`${baseUrl}/api/users/${ids.employeeId}`, {
+    method: 'PATCH', headers: authed(saLogin.token), body: JSON.stringify({ email: 'employee@test.local' }),
+  });
+});
+
 test('dashboard — an employee cannot view another employee\'s personal dashboard via employee_id', async () => {
   const { body: empLogin } = await login('employee@test.local', 'EmpPass123');
   const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');

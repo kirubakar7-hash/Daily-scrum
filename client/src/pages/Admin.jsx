@@ -336,7 +336,15 @@ function UsersTab() {
                       className="w-28 border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
                     />
                   </td>
-                  <td className="pr-2 text-grey-500">{u.email}</td>
+                  <td className="pr-2">
+                    <input
+                      type="email"
+                      defaultValue={u.email}
+                      disabled={!!u.is_super_admin_protected && currentUser.role !== 'super_admin'}
+                      onBlur={(e) => { if (e.target.value !== u.email) updateUser(u, { email: e.target.value }); }}
+                      className="w-40 border border-grey-200 rounded-lg px-1.5 py-1 text-xs text-grey-700 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 disabled:bg-grey-50 disabled:text-grey-400"
+                    />
+                  </td>
                   <td className="pr-2">
                     <select
                       disabled={!!u.is_super_admin_protected}
