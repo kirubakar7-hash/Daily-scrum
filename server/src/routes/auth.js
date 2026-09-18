@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { db } from '../db.js';
 import { signToken, requireAuth, ROLE_LABELS } from '../middleware/auth.js';
 import { recordAudit } from '../lib/audit.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 
 const router = Router();
 
@@ -28,7 +29,7 @@ function recordFailedAttempt(email) {
   loginAttempts.set(email, entry);
 }
 
-router.post('/login', (req, res) => {
+router.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
   const normalizedEmail = email.trim().toLowerCase();
@@ -37,7 +38,7 @@ router.post('/login', (req, res) => {
     return res.status(429).json({ error: 'Too many attempts. Please wait 15 minutes and try again.' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE lower(email) = lower(?)').get(email.trim());
+  const user = await db.prepare('SELECT * FROM users WHERE lower(email) = lower(?)').get(email.trim());
   if (!user || !user.is_active) {
     recordFailedAttempt(normalizedEmail);
     return res.status(401).json({ error: 'Incorrect email or password.' });
@@ -51,16 +52,16 @@ router.post('/login', (req, res) => {
 
   const token = signToken(user);
   res.json({ token, user: sanitize(user) });
-});
+}));
 
-router.get('/me', requireAuth, (req, res) => {
+router.get('/me', requireAuth, asyncHandler((req, res) => {
   res.json({ user: sanitize(req.user) });
-});
+}));
 
 // Self-service — every role can change their own password (unlike /users/:id/reset-password, which is
 // an admin forcing a reset on someone else and never asks for the old password). Requires the current
 // password so a session left open on a shared device can't be used to silently take over the account.
-router.post('/change-password', requireAuth, (req, res) => {
+router.post('/change-password', requireAuth, asyncHandler(async (req, res) => {
   const { current_password, new_password } = req.body || {};
   if (!current_password || !new_password) {
     return res.status(400).json({ error: 'Current and new password are required.' });
@@ -74,11 +75,11 @@ router.post('/change-password', requireAuth, (req, res) => {
   }
 
   const hash = bcrypt.hashSync(new_password, 10);
-  db.prepare(`UPDATE users SET password_hash=?, token_version=token_version+1, updated_at=datetime('now'), updated_by=? WHERE id=?`)
+  await db.prepare(`UPDATE users SET password_hash=?, token_version=token_version+1, updated_at=datetime('now'), updated_by=? WHERE id=?`)
     .run(hash, req.user.id, req.user.id);
-  recordAudit({ tableName: 'users', recordId: req.user.id, fieldName: 'password', oldValue: '(hidden)', newValue: '(changed by self)', changedBy: req.user.id, changedByName: req.user.full_name });
+  await recordAudit({ tableName: 'users', recordId: req.user.id, fieldName: 'password', oldValue: '(hidden)', newValue: '(changed by self)', changedBy: req.user.id, changedByName: req.user.full_name });
   res.json({ ok: true });
-});
+}));
 
 function sanitize(user) {
   const { password_hash, ...rest } = user;

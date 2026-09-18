@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { db } from './db.js';
 
 // Full data reset: removes every business record and every user except the
@@ -10,7 +11,7 @@ if (process.env.NODE_ENV === 'production' && process.argv[2] !== '--force') {
   process.exit(1);
 }
 
-const superAdmins = db.prepare('SELECT id, full_name, email FROM users WHERE is_super_admin_protected = 1').all();
+const superAdmins = await db.prepare('SELECT id, full_name, email FROM users WHERE is_super_admin_protected = 1').all();
 
 if (superAdmins.length === 0) {
   console.error('No protected Super Admin account found — refusing to reset. Run `npm run seed` first, or promote a user manually.');
@@ -37,22 +38,22 @@ const wipeTables = [
 ];
 
 for (const table of wipeTables) {
-  db.exec(`DELETE FROM ${table}`);
+  await db.exec(`DELETE FROM ${table}`);
 }
 
 // Custom task types and categories are part of this org's setup, same as teams — reset them too,
 // but keep the two built-in task types (Recurring/Ad-hoc) the app's repeat engine and dashboard math
 // depend on existing.
-db.exec(`DELETE FROM task_types WHERE is_protected = 0`);
-db.exec(`DELETE FROM categories`);
+await db.exec(`DELETE FROM task_types WHERE is_protected = 0`);
+await db.exec(`DELETE FROM categories`);
 
 // users.team_id -> teams.id and teams.leader_user_id -> users.id form a cycle,
 // so null out both sides before deleting either table.
-db.exec('UPDATE users SET team_id = NULL');
-db.exec('UPDATE teams SET leader_user_id = NULL');
-db.exec('DELETE FROM teams');
-db.prepare('DELETE FROM users WHERE id != ?').run(superAdmin.id);
+await db.exec('UPDATE users SET team_id = NULL');
+await db.exec('UPDATE teams SET leader_user_id = NULL');
+await db.exec('DELETE FROM teams');
+await db.prepare('DELETE FROM users WHERE id != ?').run(superAdmin.id);
 
-const remainingUsers = db.prepare('SELECT COUNT(*) c FROM users').get().c;
+const remainingUsers = (await db.prepare('SELECT COUNT(*) c FROM users').get()).c;
 console.log(`Done. ${remainingUsers} user remains (the Super Admin). All other data has been removed.`);
 console.log(`Log in as ${superAdmin.email} to create teams and people from the Admin screen.`);

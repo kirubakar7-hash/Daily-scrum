@@ -2,18 +2,19 @@ import { Router } from 'express';
 import { db } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { visibleEmployeeIds } from '../lib/scope.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 
 const router = Router();
 router.use(requireAuth);
 
-function buildFilters(req) {
-  const allowed = visibleEmployeeIds(req.user);
+async function buildFilters(req) {
+  const allowed = await visibleEmployeeIds(req.user);
   let employeeIds = allowed;
   if (req.query.employee_id) {
     employeeIds = allowed.includes(req.query.employee_id) ? [req.query.employee_id] : [];
   }
   if (req.query.team_id) {
-    const teamUsers = db.prepare('SELECT id FROM users WHERE team_id = ?').all(req.query.team_id).map((r) => r.id);
+    const teamUsers = (await db.prepare('SELECT id FROM users WHERE team_id = ?').all(req.query.team_id)).map((r) => r.id);
     employeeIds = employeeIds.filter((id) => teamUsers.includes(id));
   }
   return employeeIds;
@@ -35,13 +36,13 @@ function buildCommitmentFilter(req) {
 }
 
 /** GET /api/history/commitments — filterable history of commitments (recurring occurrences, ad-hoc, carry-forwards) */
-router.get('/commitments', (req, res) => {
-  const employeeIds = buildFilters(req);
+router.get('/commitments', asyncHandler(async (req, res) => {
+  const employeeIds = await buildFilters(req);
   if (employeeIds.length === 0) return res.json({ commitments: [] });
   const clause = employeeIds.map(() => '?').join(',');
   const params = [...employeeIds];
   let sql = `
-    SELECT c.rowid AS seq, c.*, u.full_name, t.name AS task_type_name, cat.name AS category_name,
+    SELECT c.*, u.full_name, t.name AS task_type_name, cat.name AS category_name,
       EXISTS(SELECT 1 FROM requests r WHERE r.commitment_id = c.id AND r.type = 'support') AS had_support_request
     FROM commitments c
     JOIN users u ON u.id = c.employee_id
@@ -58,17 +59,17 @@ router.get('/commitments', (req, res) => {
   if (req.query.category_id) { sql += ' AND c.category_id = ?'; params.push(req.query.category_id); }
   sql += ' ORDER BY c.scrum_date DESC, c.created_at DESC LIMIT 500';
 
-  const rows = db.prepare(sql).all(...params).map((r) => ({
+  const rows = (await db.prepare(sql).all(...params)).map((r) => ({
     ...r,
     code: `TSK-${String(r.seq).padStart(6, '0')}`,
     task_type: r.task_type_name || (r.type === 'recurring' ? 'Recurring' : 'Ad-hoc'),
   }));
   res.json({ commitments: rows });
-});
+}));
 
 /** GET /api/history/summary — the per-employee rollup shown in the History module */
-router.get('/summary', (req, res) => {
-  const employeeIds = buildFilters(req);
+router.get('/summary', asyncHandler(async (req, res) => {
+  const employeeIds = await buildFilters(req);
   if (employeeIds.length === 0) return res.json({ summary: [] });
 
   const { clause: filterClause, params: filterParams } = buildCommitmentFilter(req);
@@ -77,27 +78,27 @@ router.get('/summary', (req, res) => {
   if (req.query.date_from) { scrumDateFilter += ' AND scrum_date >= ?'; scrumParams.push(req.query.date_from); }
   if (req.query.date_to) { scrumDateFilter += ' AND scrum_date <= ?'; scrumParams.push(req.query.date_to); }
 
-  const summary = employeeIds.map((id) => {
-    const user = db.prepare('SELECT full_name FROM users WHERE id = ?').get(id);
+  const summary = await Promise.all(employeeIds.map(async (id) => {
+    const user = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(id);
     const params = [id, ...filterParams];
 
-    const scrumDays = db.prepare(`SELECT COUNT(*) c FROM scrum_sessions WHERE employee_id = ? AND status='completed'${scrumDateFilter}`).get(id, ...scrumParams).c;
-    const activities = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ?${filterClause}`).get(...params).c;
-    const completed = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND status='completed'${filterClause}`).get(...params).c;
-    const supportRequired = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND status='support_required'${filterClause}`).get(...params).c;
+    const scrumDays = (await db.prepare(`SELECT COUNT(*) c FROM scrum_sessions WHERE employee_id = ? AND status='completed'${scrumDateFilter}`).get(id, ...scrumParams)).c;
+    const activities = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ?${filterClause}`).get(...params)).c;
+    const completed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND status='completed'${filterClause}`).get(...params)).c;
+    const supportRequired = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND status='support_required'${filterClause}`).get(...params)).c;
     // "Escalated" = how many of this employee's tasks needed leader escalation — either the current
     // requests-table Support flow, or (for tasks predating that table) the old carried_forward_to_id
     // link to an auto-generated leader task. Must match the per-row "Escalated to Leader" logic in
     // history.js's /commitments and History.jsx exactly, or the summary count won't match the detail rows.
-    const escalatedToLeader = db.prepare(`
+    const escalatedToLeader = (await db.prepare(`
       SELECT COUNT(*) c FROM commitments cm
       WHERE cm.employee_id = ?${filterClause} AND (
         cm.carried_forward_to_id IS NOT NULL
         OR EXISTS(SELECT 1 FROM requests r WHERE r.commitment_id = cm.id AND r.type = 'support')
       )
-    `).get(...params).c;
-    const recurring = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND type='recurring'${filterClause}`).get(...params).c;
-    const adhoc = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND type='adhoc'${filterClause}`).get(...params).c;
+    `).get(...params)).c;
+    const recurring = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND type='recurring'${filterClause}`).get(...params)).c;
+    const adhoc = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND type='adhoc'${filterClause}`).get(...params)).c;
 
     return {
       employee_id: id,
@@ -110,14 +111,14 @@ router.get('/summary', (req, res) => {
       recurring_activities: recurring,
       adhoc_activities: adhoc,
     };
-  });
+  }));
 
   res.json({ summary });
-});
+}));
 
 /** GET /api/history/export.csv — CSV export of commitments history */
-router.get('/export.csv', (req, res) => {
-  const employeeIds = buildFilters(req);
+router.get('/export.csv', asyncHandler(async (req, res) => {
+  const employeeIds = await buildFilters(req);
   if (employeeIds.length === 0) {
     res.set('Content-Type', 'text/csv');
     return res.send('No data');
@@ -126,7 +127,7 @@ router.get('/export.csv', (req, res) => {
   const { clause: filterClause, params: filterParams } = buildCommitmentFilter(req);
   const params = [...employeeIds, ...filterParams];
   let sql = `
-    SELECT c.rowid AS seq, c.scrum_date, u.full_name, c.description, c.type, t.name AS task_type_name,
+    SELECT c.seq, c.scrum_date, u.full_name, c.description, c.type, t.name AS task_type_name,
            cat.name AS category_name, c.priority, c.status, c.due_date, c.non_completion_reason
     FROM commitments c
     JOIN users u ON u.id = c.employee_id
@@ -135,7 +136,7 @@ router.get('/export.csv', (req, res) => {
     WHERE c.employee_id IN (${clause})${filterClause}
     ORDER BY c.scrum_date DESC
   `;
-  const rows = db.prepare(sql).all(...params);
+  const rows = await db.prepare(sql).all(...params);
 
   const header = ['Code', 'Date', 'Employee', 'Activity', 'Type', 'Task Type', 'Category', 'Priority', 'Status', 'Due Date', 'Reason If Not Completed'];
   // Guards against spreadsheet formula injection: a cell value starting with =, +, -, or @ is treated as
@@ -157,6 +158,6 @@ router.get('/export.csv', (req, res) => {
   res.set('Content-Type', 'text/csv');
   res.set('Content-Disposition', 'attachment; filename="scrum-history.csv"');
   res.send(lines.join('\n'));
-});
+}));
 
 export default router;

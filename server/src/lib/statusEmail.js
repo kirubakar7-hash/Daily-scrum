@@ -12,26 +12,26 @@ function escapeHtml(s) {
  *  task, grouped by employee, oldest-due-first. Completed work is deliberately left out of the itemized
  *  list (per how this was asked for) — the summary line still counts it, since "how much got done today"
  *  is still useful context, but the point of the list itself is "what still needs attention." */
-export function buildStatusEmail() {
+export async function buildStatusEmail() {
   const date = today();
 
-  const activeUsers = db.prepare(`SELECT COUNT(*) c FROM users WHERE is_active=1`).get().c;
-  const teams = db.prepare(`SELECT COUNT(*) c FROM teams WHERE is_active=1`).get().c;
-  const totalEmployees = db.prepare(`SELECT COUNT(*) c FROM users WHERE role='employee' AND is_active=1`).get().c;
-  const scrumCompleted = db.prepare(`SELECT COUNT(*) c FROM scrum_sessions WHERE scrum_date=? AND status='completed'`).get(date).c;
-  const completedToday = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed' AND date(completed_at)=?`).get(date).c;
-  const pendingCount = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='pending' AND is_active=1`).get().c;
-  const inProgressCount = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='in_progress' AND is_active=1`).get().c;
-  const supportRequiredCount = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='support_required' AND is_active=1`).get().c;
-  const delayedCount = db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status != 'completed' AND due_date < ? AND is_active=1`).get(date).c;
+  const activeUsers = (await db.prepare(`SELECT COUNT(*) c FROM users WHERE is_active=1`).get()).c;
+  const teams = (await db.prepare(`SELECT COUNT(*) c FROM teams WHERE is_active=1`).get()).c;
+  const totalEmployees = (await db.prepare(`SELECT COUNT(*) c FROM users WHERE role='employee' AND is_active=1`).get()).c;
+  const scrumCompleted = (await db.prepare(`SELECT COUNT(*) c FROM scrum_sessions WHERE scrum_date=? AND status='completed'`).get(date)).c;
+  const completedToday = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed' AND date(completed_at)=?`).get(date)).c;
+  const pendingCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='pending' AND is_active=1`).get()).c;
+  const inProgressCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='in_progress' AND is_active=1`).get()).c;
+  const supportRequiredCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='support_required' AND is_active=1`).get()).c;
+  const delayedCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status != 'completed' AND due_date < ? AND is_active=1`).get(date)).c;
 
   // Every outstanding task, across the whole org, oldest due date first so what's most overdue leads.
-  const outstanding = db.prepare(`
+  const outstanding = (await db.prepare(`
     SELECT c.*, u.full_name AS employee_name
     FROM commitments c JOIN users u ON u.id = c.employee_id
     WHERE c.status != 'completed' AND c.is_active = 1 AND u.is_active = 1
     ORDER BY u.full_name, c.due_date
-  `).all().map((r) => withDelay(r, date));
+  `).all()).map((r) => withDelay(r, date));
 
   const byEmployee = new Map();
   for (const t of outstanding) {

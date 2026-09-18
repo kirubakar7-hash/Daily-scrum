@@ -1,20 +1,17 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { createServer } from 'node:http';
 import { v4 as uuid } from 'uuid';
 import bcrypt from 'bcryptjs';
+import { createTestSchema, dropTestSchema } from './helpers/pgTestSchema.js';
 
-// DB_PATH/JWT_SECRET must be set before db.js / middleware/auth.js are first imported — both read them
-// at module-load time — so index.js and db.js are imported dynamically below, never statically at the
-// top of this file (a static import is hoisted and would run before this code).
-const tmpDir = mkdtempSync(path.join(tmpdir(), 'dsm-api-test-'));
-process.env.DB_PATH = path.join(tmpDir, 'test.db');
+// JWT_SECRET must be set, and the test schema created, before db.js / middleware/auth.js are first
+// imported — both read env at module-load time — so index.js and db.js are imported dynamically below,
+// never statically at the top of this file (a static import is hoisted and would run before this code).
 process.env.JWT_SECRET = 'test-secret-not-for-production-use';
 process.env.NODE_ENV = 'test';
 
+const schema = await createTestSchema();
 const { db, closeDb } = await import('../src/db.js');
 const { app } = await import('../src/index.js');
 
@@ -23,13 +20,13 @@ const ids = {};
 
 before(async () => {
   const superAdminId = uuid();
-  db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, is_super_admin_protected) VALUES (?, ?, ?, ?, 'super_admin', 1)`)
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, is_super_admin_protected) VALUES (?, ?, ?, ?, 'super_admin', 1)`)
     .run(superAdminId, 'Test Super Admin', 'super@test.local', bcrypt.hashSync('SuperPass123', 10));
   const adminId = uuid();
-  db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'admin')`)
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'admin')`)
     .run(adminId, 'Test Admin', 'admin@test.local', bcrypt.hashSync('AdminPass123', 10));
   const employeeId = uuid();
-  db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
     .run(employeeId, 'Test Employee', 'employee@test.local', bcrypt.hashSync('EmpPass123', 10));
   Object.assign(ids, { superAdminId, adminId, employeeId });
 
@@ -40,10 +37,8 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
-  closeDb();
-  // Windows can briefly hold the SQLite WAL/SHM files open right after close() — retry rather than
-  // fail the whole suite over an unrelated cleanup race.
-  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await closeDb();
+  await dropTestSchema(schema);
 });
 
 async function login(email, password) {
@@ -165,7 +160,7 @@ test('auth — self-service change-password works for any role, rejects a wrong 
   // A dedicated throwaway account — mutating the shared 'employee@test.local' seeded account here would
   // break every later test that still logs in with its original password.
   const changePwId = uuid();
-  db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
     .run(changePwId, 'Change Pw Test', 'changepw@test.local', bcrypt.hashSync('OriginalPass123', 10));
 
   const { body: empLogin } = await login('changepw@test.local', 'OriginalPass123');
@@ -237,17 +232,17 @@ test('users — deleting a person with recurring-task assignments or scrum sessi
   const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
 
   const withRecurring = uuid();
-  db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
     .run(withRecurring, 'Has Recurring Task', 'recurring@test.local', bcrypt.hashSync('Pass12345', 10));
-  db.prepare(`INSERT INTO recurring_activities (id, employee_id, title) VALUES (?, ?, 'Weekly report')`).run(uuid(), withRecurring);
+  await db.prepare(`INSERT INTO recurring_activities (id, employee_id, title) VALUES (?, ?, 'Weekly report')`).run(uuid(), withRecurring);
 
   const blockedRecurring = await fetch(`${baseUrl}/api/users/${withRecurring}`, { method: 'DELETE', headers: authed(saLogin.token) });
   assert.equal(blockedRecurring.status, 409, 'a user with a recurring-task assignment must not be hard-deleted');
 
   const withSession = uuid();
-  db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
     .run(withSession, 'Has Scrum Session', 'session@test.local', bcrypt.hashSync('Pass12345', 10));
-  db.prepare(`INSERT INTO scrum_sessions (id, employee_id, scrum_date) VALUES (?, ?, '2026-09-15')`).run(uuid(), withSession);
+  await db.prepare(`INSERT INTO scrum_sessions (id, employee_id, scrum_date) VALUES (?, ?, '2026-09-15')`).run(uuid(), withSession);
 
   const blockedSession = await fetch(`${baseUrl}/api/users/${withSession}`, { method: 'DELETE', headers: authed(saLogin.token) });
   assert.equal(blockedSession.status, 409, 'a user with a scrum session recorded must not be hard-deleted');

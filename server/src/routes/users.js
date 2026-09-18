@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { db } from '../db.js';
 import { requireAuth, requireRole, ROLE_LABELS } from '../middleware/auth.js';
 import { recordAudit, auditDiff } from '../lib/audit.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -19,34 +20,34 @@ function sanitize(u) {
 // canActOnEmployee() in scope.js. (This used to be team-scoped for 'leader', back when only Admin — which
 // a plain leader can't open — called this endpoint; My Tasks' org-wide assignee picker is the first
 // leader-reachable caller, so there's no old behavior this could regress.)
-router.get('/', requireRole('super_admin', 'admin', 'leader', 'senior_management'), (req, res) => {
-  const rows = db.prepare('SELECT * FROM users ORDER BY is_active DESC, full_name').all();
+router.get('/', requireRole('super_admin', 'admin', 'leader', 'senior_management'), asyncHandler(async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM users ORDER BY is_active DESC, full_name').all();
   res.json({ users: rows.map(sanitize) });
-});
+}));
 
-router.post('/', requireRole('super_admin', 'admin'), (req, res) => {
+router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const { full_name, email, password, role, team_id, job_title } = req.body || {};
   if (!full_name || !email || !password || !role) {
     return res.status(400).json({ error: 'Name, email, password, and role are required.' });
   }
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (!ROLE_LABELS[role]) return res.status(400).json({ error: 'Invalid role.' });
-  const existing = db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(email.trim());
+  const existing = await db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(email.trim());
   if (existing) return res.status(400).json({ error: 'A user with that email already exists.' });
 
   const id = uuid();
   const hash = bcrypt.hashSync(password, 10);
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO users (id, full_name, email, password_hash, role, team_id, job_title, created_by, updated_by)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, full_name.trim(), email.trim(), hash, role, team_id || null, job_title || null, req.user.id, req.user.id);
 
-  recordAudit({ tableName: 'users', recordId: id, fieldName: 'created', newValue: `${full_name} (${role})`, changedBy: req.user.id, changedByName: req.user.full_name });
-  res.status(201).json({ user: sanitize(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
-});
+  await recordAudit({ tableName: 'users', recordId: id, fieldName: 'created', newValue: `${full_name} (${role})`, changedBy: req.user.id, changedByName: req.user.full_name });
+  res.status(201).json({ user: sanitize(await db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
+}));
 
-router.patch('/:id', requireRole('super_admin', 'admin'), (req, res) => {
-  const before = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const before = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'User not found.' });
 
   const { full_name, email, role, team_id, job_title, is_active, reason } = req.body || {};
@@ -69,7 +70,7 @@ router.patch('/:id', requireRole('super_admin', 'admin'), (req, res) => {
   if (email !== undefined) {
     normalizedEmail = email.trim();
     if (!normalizedEmail) return res.status(400).json({ error: 'Email is required.' });
-    const existing = db.prepare('SELECT id FROM users WHERE lower(email) = lower(?) AND id != ?').get(normalizedEmail, req.params.id);
+    const existing = await db.prepare('SELECT id FROM users WHERE lower(email) = lower(?) AND id != ?').get(normalizedEmail, req.params.id);
     if (existing) return res.status(400).json({ error: 'A user with that email already exists.' });
   }
 
@@ -82,17 +83,17 @@ router.patch('/:id', requireRole('super_admin', 'admin'), (req, res) => {
     is_active: is_active !== undefined ? (is_active ? 1 : 0) : before.is_active,
   };
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE users SET full_name=?, email=?, role=?, team_id=?, job_title=?, is_active=?, updated_at=datetime('now'), updated_by=?
     WHERE id=?
   `).run(after.full_name, after.email, after.role, after.team_id, after.job_title, after.is_active, req.user.id, req.params.id);
 
-  auditDiff({ tableName: 'users', recordId: req.params.id, before, after, changedBy: req.user.id, changedByName: req.user.full_name, reason });
-  res.json({ user: sanitize(db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)) });
-});
+  await auditDiff({ tableName: 'users', recordId: req.params.id, before, after, changedBy: req.user.id, changedByName: req.user.full_name, reason });
+  res.json({ user: sanitize(await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)) });
+}));
 
-router.post('/:id/reset-password', requireRole('super_admin', 'admin'), (req, res) => {
-  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+router.post('/:id/reset-password', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'User not found.' });
   if (target.is_super_admin_protected && req.user.role !== 'super_admin') {
     return res.status(403).json({ error: 'Only a Super Admin can modify the Super Admin account.' });
@@ -100,13 +101,13 @@ router.post('/:id/reset-password', requireRole('super_admin', 'admin'), (req, re
   const { password } = req.body || {};
   if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   const hash = bcrypt.hashSync(password, 10);
-  db.prepare(`UPDATE users SET password_hash=?, token_version=token_version+1, updated_at=datetime('now'), updated_by=? WHERE id=?`).run(hash, req.user.id, req.params.id);
-  recordAudit({ tableName: 'users', recordId: req.params.id, fieldName: 'password', oldValue: '(hidden)', newValue: '(reset)', changedBy: req.user.id, changedByName: req.user.full_name });
+  await db.prepare(`UPDATE users SET password_hash=?, token_version=token_version+1, updated_at=datetime('now'), updated_by=? WHERE id=?`).run(hash, req.user.id, req.params.id);
+  await recordAudit({ tableName: 'users', recordId: req.params.id, fieldName: 'password', oldValue: '(hidden)', newValue: '(reset)', changedBy: req.user.id, changedByName: req.user.full_name });
   res.json({ ok: true });
-});
+}));
 
-router.delete('/:id', requireRole('super_admin', 'admin'), (req, res) => {
-  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+router.delete('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'User not found.' });
 
   if (target.is_super_admin_protected) {
@@ -118,14 +119,14 @@ router.delete('/:id', requireRole('super_admin', 'admin'), (req, res) => {
 
   // Anything with real Scrum history must be kept — deactivate instead of deleting.
   const linkedCounts = {
-    'a team they lead': db.prepare('SELECT COUNT(*) c FROM teams WHERE leader_user_id = ?').get(target.id).c,
-    commitments: db.prepare('SELECT COUNT(*) c FROM commitments WHERE employee_id = ?').get(target.id).c,
-    actions: db.prepare('SELECT COUNT(*) c FROM actions WHERE employee_id = ?').get(target.id).c,
-    escalations: db.prepare('SELECT COUNT(*) c FROM escalations WHERE employee_id = ?').get(target.id).c,
-    requests: db.prepare('SELECT COUNT(*) c FROM requests WHERE requested_by = ? OR resolved_by = ?').get(target.id, target.id).c,
-    'audit history': db.prepare('SELECT COUNT(*) c FROM audit_logs WHERE owner_id = ?').get(target.id).c,
-    'recurring task assignments': db.prepare('SELECT COUNT(*) c FROM recurring_activities WHERE employee_id = ?').get(target.id).c,
-    'scrum sessions': db.prepare('SELECT COUNT(*) c FROM scrum_sessions WHERE employee_id = ?').get(target.id).c,
+    'a team they lead': (await db.prepare('SELECT COUNT(*) c FROM teams WHERE leader_user_id = ?').get(target.id)).c,
+    commitments: (await db.prepare('SELECT COUNT(*) c FROM commitments WHERE employee_id = ?').get(target.id)).c,
+    actions: (await db.prepare('SELECT COUNT(*) c FROM actions WHERE employee_id = ?').get(target.id)).c,
+    escalations: (await db.prepare('SELECT COUNT(*) c FROM escalations WHERE employee_id = ?').get(target.id)).c,
+    requests: (await db.prepare('SELECT COUNT(*) c FROM requests WHERE requested_by = ? OR resolved_by = ?').get(target.id, target.id)).c,
+    'audit history': (await db.prepare('SELECT COUNT(*) c FROM audit_logs WHERE owner_id = ?').get(target.id)).c,
+    'recurring task assignments': (await db.prepare('SELECT COUNT(*) c FROM recurring_activities WHERE employee_id = ?').get(target.id)).c,
+    'scrum sessions': (await db.prepare('SELECT COUNT(*) c FROM scrum_sessions WHERE employee_id = ?').get(target.id)).c,
   };
   const reasons = Object.entries(linkedCounts).filter(([, c]) => c > 0).map(([label, c]) => `${c} ${label}`);
   if (reasons.length > 0) {
@@ -134,12 +135,12 @@ router.delete('/:id', requireRole('super_admin', 'admin'), (req, res) => {
     });
   }
 
-  recordAudit({ tableName: 'users', recordId: target.id, fieldName: 'deleted', oldValue: `${target.full_name} (${target.email})`, changedBy: req.user.id, changedByName: req.user.full_name, reason: req.body?.reason || req.query?.reason });
-  db.prepare('DELETE FROM recurring_activities WHERE employee_id = ?').run(target.id);
-  db.prepare('DELETE FROM scrum_sessions WHERE employee_id = ?').run(target.id);
-  db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+  await recordAudit({ tableName: 'users', recordId: target.id, fieldName: 'deleted', oldValue: `${target.full_name} (${target.email})`, changedBy: req.user.id, changedByName: req.user.full_name, reason: req.body?.reason || req.query?.reason });
+  await db.prepare('DELETE FROM recurring_activities WHERE employee_id = ?').run(target.id);
+  await db.prepare('DELETE FROM scrum_sessions WHERE employee_id = ?').run(target.id);
+  await db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
   res.json({ ok: true });
-});
+}));
 
 export const ROLES = ROLE_LABELS;
 export default router;

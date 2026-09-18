@@ -4,13 +4,13 @@ import { db } from '../db.js';
  *  This is deliberately universal (see canActOnEmployee below for the separate, narrower EDIT check) —
  *  the org's rule is "everyone sees everyone's tasks and history; only a Leader can act on someone
  *  else's task." */
-export function visibleEmployeeIds(_user) {
-  return db.prepare('SELECT id FROM users').all().map((r) => r.id);
+export async function visibleEmployeeIds(_user) {
+  return (await db.prepare('SELECT id FROM users').all()).map((r) => r.id);
 }
 
-export function canViewEmployee(user, employeeId) {
+export async function canViewEmployee(user, employeeId) {
   if (user.id === employeeId) return true;
-  return visibleEmployeeIds(user).includes(employeeId);
+  return (await visibleEmployeeIds(user)).includes(employeeId);
 }
 
 /** Returns whether `user` may CREATE/EDIT/change-status-on a task belonging to `employeeId` — the
