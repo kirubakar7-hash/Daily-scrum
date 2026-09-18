@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { Badge, Button, Card, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
 import RecurrencePicker, { DEFAULT_RULE } from '../components/RecurrencePicker';
+import ImportButton from '../components/ImportButton';
 import { useAuth } from '../lib/AuthContext';
 
 const TABS = [
@@ -100,7 +101,14 @@ function TeamsTab() {
 
   return (
     <Card>
-      <div className="flex justify-end mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <ImportButton
+          entityLabel="Teams"
+          headers={['name', 'leader_email']}
+          example={{ name: 'Finance Operations', leader_email: 'leader@company.com' }}
+          endpoint="/teams/import"
+          onDone={load}
+        />
         <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Team</Button>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Team">
@@ -195,7 +203,16 @@ function CategoriesTab() {
         <p className="text-xs text-grey-400">
           What area of the business a task belongs to — e.g. Finance, Compliance, Operations. Separate from Task Type, which only controls whether work repeats.
         </p>
-        <Button onClick={() => setFormOpen(true)} className="shrink-0"><Plus className="w-4 h-4" /> Add</Button>
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <ImportButton
+            entityLabel="Categories"
+            headers={['name', 'description']}
+            example={{ name: 'Finance', description: 'Accounting and financial reporting tasks' }}
+            endpoint="/categories/import"
+            onDone={load}
+          />
+          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add</Button>
+        </div>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Category">
         <div className="space-y-3">
@@ -294,7 +311,14 @@ function UsersTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end" data-tour="admin-create-user">
+      <div className="flex flex-wrap items-center justify-between gap-3" data-tour="admin-create-user">
+        <ImportButton
+          entityLabel="Users"
+          headers={['full_name', 'email', 'password', 'role', 'team_name', 'job_title']}
+          example={{ full_name: 'Jane Doe', email: 'jane@company.com', password: 'TempPass123', role: 'employee', team_name: 'General Team', job_title: 'Accountant' }}
+          endpoint="/users/import"
+          onDone={load}
+        />
         <Button onClick={() => setFormOpen(true)}><UserPlus className="w-4 h-4" /> Create User</Button>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Create User" wide>
@@ -498,7 +522,16 @@ function TaskTypesTab() {
             "Recurring" and "Ad-hoc" are built in and can be renamed but not removed — the app relies on at least one active type of each kind.
           </p>
         </div>
-        <Button onClick={() => setFormOpen(true)} className="shrink-0"><Plus className="w-4 h-4" /> Add</Button>
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <ImportButton
+            entityLabel="Task Types"
+            headers={['name', 'mechanic']}
+            example={{ name: 'Compliance Review', mechanic: 'adhoc' }}
+            endpoint="/task-types/import"
+            onDone={load}
+          />
+          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add</Button>
+        </div>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Task Type">
         <div className="space-y-3">
@@ -608,7 +641,14 @@ function RecurringTasksTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ImportButton
+          entityLabel="Recurring Tasks"
+          headers={['title', 'employee_emails', 'task_type_name', 'category_name', 'priority', 'start_date', 'frequency']}
+          example={{ title: 'Daily bank reconciliation', employee_emails: 'jane@company.com;alex@company.com', task_type_name: '', category_name: 'Finance', priority: 'Medium', start_date: '2026-09-20', frequency: 'Daily' }}
+          endpoint="/recurring-tasks/import"
+          onDone={load}
+        />
         <Button onClick={() => setFormOpen(true)}><Repeat className="w-4 h-4" /> Build a Recurring Task</Button>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Build a Recurring Task" wide>

@@ -26,11 +26,49 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
     await db.prepare(`INSERT INTO task_types (id, name, mechanic, created_by, updated_by) VALUES (?, ?, ?, ?, ?)`)
       .run(id, name.trim(), mechanic, req.user.id, req.user.id);
   } catch (e) {
-    if (String(e.message).includes('UNIQUE')) return res.status(409).json({ error: 'A type with this name already exists.' });
+    // Postgres's unique_violation code (23505) — this used to check e.message for the string 'UNIQUE',
+    // which was SQLite's own error text; Postgres's real message ("duplicate key value violates unique
+    // constraint...") never matched it, so this catch silently stopped working after the Postgres
+    // migration and a duplicate name fell through to an unhandled 500 instead of the intended 409.
+    if (e.code === '23505') return res.status(409).json({ error: 'A type with this name already exists.' });
     throw e;
   }
   await recordAudit({ tableName: 'task_types', recordId: id, fieldName: 'created', newValue: name, changedBy: req.user.id, changedByName: req.user.full_name });
   res.status(201).json({ task_type: await db.prepare('SELECT * FROM task_types WHERE id = ?').get(id) });
+}));
+
+/** POST /api/task-types/import — bulk import from the Admin page's CSV template, same validation as
+ *  the single POST / above, per-row so one bad row doesn't stop the rest. */
+router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const seenNames = new Set();
+  const results = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    try {
+      const name = (r.name || '').trim();
+      const mechanic = (r.mechanic || '').trim().toLowerCase();
+      if (!name) throw new Error('Type name is required.');
+      if (!['recurring', 'adhoc'].includes(mechanic)) throw new Error('mechanic must be "recurring" or "adhoc".');
+      if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate type name within this file.');
+
+      const id = uuid();
+      try {
+        await db.prepare(`INSERT INTO task_types (id, name, mechanic, created_by, updated_by) VALUES (?, ?, ?, ?, ?)`)
+          .run(id, name, mechanic, req.user.id, req.user.id);
+      } catch (e) {
+        if (e.code === '23505') throw new Error('A type with this name already exists.');
+        throw e;
+      }
+      seenNames.add(name.toLowerCase());
+      await recordAudit({ tableName: 'task_types', recordId: id, fieldName: 'created', newValue: name, changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Bulk import' });
+      results.push({ row: i + 1, success: true });
+    } catch (e) {
+      results.push({ row: i + 1, success: false, error: e.message });
+    }
+  }
+  res.json({ results });
 }));
 
 /** PATCH /api/task-types/:id — rename or deactivate. Mechanic can't change once set — that would silently

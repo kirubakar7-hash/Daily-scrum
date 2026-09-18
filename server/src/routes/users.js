@@ -46,6 +46,56 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
   res.status(201).json({ user: sanitize(await db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
 }));
 
+// Bulk import from the Admin page's CSV template. Each row gets the exact same validation as a single
+// POST / above (email format is stricter here, since a bad address in a one-off manual create is caught
+// immediately by the person typing it, but a CSV row has no such feedback loop) — one bad row doesn't
+// stop the rest; each row's outcome is reported back so the person can fix and re-import just the failures.
+router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const teams = await db.prepare('SELECT id, name FROM teams').all();
+  const teamByName = new Map(teams.map((t) => [t.name.trim().toLowerCase(), t.id]));
+  const seenEmails = new Set();
+  const results = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    try {
+      const full_name = (r.full_name || '').trim();
+      const email = (r.email || '').trim();
+      const password = r.password || '';
+      const role = (r.role || '').trim();
+      const teamName = (r.team_name || '').trim();
+      const job_title = (r.job_title || '').trim();
+
+      if (!full_name || !email || !password || !role) throw new Error('full_name, email, password, and role are required.');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Email is not a valid address.');
+      if (seenEmails.has(email.toLowerCase())) throw new Error('Duplicate email within this file.');
+      if (password.length < 8) throw new Error('Password must be at least 8 characters.');
+      if (!ROLE_LABELS[role]) throw new Error(`Invalid role "${role}". Must be one of: ${Object.keys(ROLE_LABELS).join(', ')}.`);
+      const existing = await db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(email);
+      if (existing) throw new Error('A user with that email already exists.');
+      let team_id = null;
+      if (teamName) {
+        team_id = teamByName.get(teamName.toLowerCase());
+        if (!team_id) throw new Error(`Team "${teamName}" was not found.`);
+      }
+
+      seenEmails.add(email.toLowerCase());
+      const id = uuid();
+      const hash = bcrypt.hashSync(password, 10);
+      await db.prepare(`
+        INSERT INTO users (id, full_name, email, password_hash, role, team_id, job_title, created_by, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, full_name, email, hash, role, team_id, job_title || null, req.user.id, req.user.id);
+      await recordAudit({ tableName: 'users', recordId: id, fieldName: 'created', newValue: `${full_name} (${role})`, changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Bulk import' });
+      results.push({ row: i + 1, success: true });
+    } catch (e) {
+      results.push({ row: i + 1, success: false, error: e.message });
+    }
+  }
+  res.json({ results });
+}));
+
 router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'User not found.' });

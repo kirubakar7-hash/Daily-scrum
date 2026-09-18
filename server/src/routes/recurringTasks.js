@@ -24,18 +24,19 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ recurring_tasks: rows });
 }));
 
-/** POST /api/recurring-tasks — build one recurring task and assign it to one or more employees at once.
- *  For each employee this creates their own recurring_activities row plus an initial commitment due on
- *  start_date, reusing the exact same repeat-on-completion engine as a manually-typed recurring task. */
-router.post('/', asyncHandler(async (req, res) => {
-  const b = req.body || {};
-  if (!b.title || !b.title.trim()) return res.status(400).json({ error: 'Please describe the recurring task.' });
+/** Shared by the single-create route and the bulk CSV import below — builds one recurring task and
+ *  assigns it to one or more employees at once. For each employee this creates their own
+ *  recurring_activities row plus an initial commitment due on start_date, reusing the exact same
+ *  repeat-on-completion engine as a manually-typed recurring task. Throws a plain Error with a
+ *  user-facing message on any validation failure, so both callers can turn that into the right response. */
+async function createRecurringTask(b, req) {
+  if (!b.title || !b.title.trim()) throw new Error('Please describe the recurring task.');
   if (!Array.isArray(b.employee_ids) || b.employee_ids.length === 0) {
-    return res.status(400).json({ error: 'Choose at least one person to assign this to.' });
+    throw new Error('Choose at least one person to assign this to.');
   }
   const rule = b.recurrence_rule || legacyFrequencyToRule(b.frequency || 'Daily');
   const ruleError = validateRule(rule);
-  if (ruleError) return res.status(400).json({ error: ruleError });
+  if (ruleError) throw new Error(ruleError);
   const startDate = b.start_date || today();
   const priority = b.priority || 'Medium';
 
@@ -43,17 +44,17 @@ router.post('/', asyncHandler(async (req, res) => {
   let mechanic = 'recurring';
   if (taskTypeId) {
     const type = await db.prepare('SELECT * FROM task_types WHERE id = ? AND is_active = 1').get(taskTypeId);
-    if (!type) return res.status(400).json({ error: 'That type is no longer available. Choose another.' });
+    if (!type) throw new Error('That type is no longer available. Choose another.');
     // A recurring template built against an Ad-hoc-mechanic type would silently die after its first
     // occurrence, since the completion engine only regenerates a next occurrence for type='recurring'.
-    if (type.mechanic !== 'recurring') return res.status(400).json({ error: 'Choose a Recurring-type category for a recurring task.' });
+    if (type.mechanic !== 'recurring') throw new Error('Choose a Recurring-type category for a recurring task.');
     mechanic = type.mechanic;
   }
 
   let categoryId = b.category_id || null;
   if (categoryId) {
     const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
-    if (!category) return res.status(400).json({ error: 'That category is no longer available. Choose another.' });
+    if (!category) throw new Error('That category is no longer available. Choose another.');
   }
 
   // The seed occurrence's due date snaps forward to the rule's own weekday selection, so a series
@@ -93,8 +94,71 @@ router.post('/', asyncHandler(async (req, res) => {
     return rows;
   });
 
-  if (created.length === 0) return res.status(400).json({ error: 'None of the chosen people could be assigned this task.' });
-  res.status(201).json({ recurring_tasks: created });
+  if (created.length === 0) throw new Error('None of the chosen people could be assigned this task.');
+  return created;
+}
+
+/** POST /api/recurring-tasks — build one recurring task and assign it to one or more employees at once. */
+router.post('/', asyncHandler(async (req, res) => {
+  try {
+    const created = await createRecurringTask(req.body || {}, req);
+    res.status(201).json({ recurring_tasks: created });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+}));
+
+/** POST /api/recurring-tasks/import — bulk import from the Admin page's CSV template. One row can
+ *  assign to several people at once via a semicolon-separated employee_emails cell, reusing the exact
+ *  same createRecurringTask() fan-out the single-create form uses — only the name→ID resolution (email,
+ *  task type name, category name) is specific to this endpoint, since a CSV names things, not IDs. */
+router.post('/import', asyncHandler(async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const users = await db.prepare('SELECT id, email FROM users').all();
+  const userByEmail = new Map(users.map((u) => [u.email.trim().toLowerCase(), u.id]));
+  const taskTypes = await db.prepare('SELECT id, name FROM task_types').all();
+  const taskTypeByName = new Map(taskTypes.map((t) => [t.name.trim().toLowerCase(), t.id]));
+  const categories = await db.prepare('SELECT id, name FROM categories').all();
+  const categoryByName = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c.id]));
+  const results = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    try {
+      const emails = (r.employee_emails || '').split(';').map((e) => e.trim()).filter(Boolean);
+      if (emails.length === 0) throw new Error('employee_emails is required (semicolon-separated if more than one).');
+      const employee_ids = emails.map((e) => userByEmail.get(e.toLowerCase())).filter(Boolean);
+      if (employee_ids.length === 0) throw new Error('None of the listed emails matched an existing user.');
+
+      let task_type_id = null;
+      const taskTypeName = (r.task_type_name || '').trim();
+      if (taskTypeName) {
+        task_type_id = taskTypeByName.get(taskTypeName.toLowerCase());
+        if (!task_type_id) throw new Error(`Task type "${taskTypeName}" was not found.`);
+      }
+      let category_id = null;
+      const categoryName = (r.category_name || '').trim();
+      if (categoryName) {
+        category_id = categoryByName.get(categoryName.toLowerCase());
+        if (!category_id) throw new Error(`Category "${categoryName}" was not found.`);
+      }
+
+      const created = await createRecurringTask({
+        title: r.title,
+        employee_ids,
+        task_type_id,
+        category_id,
+        priority: (r.priority || '').trim() || undefined,
+        start_date: (r.start_date || '').trim() || undefined,
+        frequency: (r.frequency || '').trim() || undefined,
+      }, req);
+      const note = created.length < emails.length ? `Assigned to ${created.length} of ${emails.length} listed people — the rest didn't match an active employee.` : undefined;
+      results.push({ row: i + 1, success: true, note });
+    } catch (e) {
+      results.push({ row: i + 1, success: false, error: e.message });
+    }
+  }
+  res.json({ results });
 }));
 
 /** PATCH /api/recurring-tasks/:id — pause or resume one person's assignment. Pausing only stops future

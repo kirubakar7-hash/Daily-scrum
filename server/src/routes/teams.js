@@ -42,6 +42,48 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
   res.status(201).json({ team: await db.prepare('SELECT * FROM teams WHERE id = ?').get(id) });
 }));
 
+// Bulk import from the Admin page's CSV template. leader_email resolves to a user the same way
+// assertValidLeader() checks an ID — must exist and be Leader/Admin/Super Admin — since a CSV names
+// people by email, not by the internal ID the single-create form submits.
+router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const users = await db.prepare('SELECT id, email, role FROM users').all();
+  const userByEmail = new Map(users.map((u) => [u.email.trim().toLowerCase(), u]));
+  const seenNames = new Set();
+  const results = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    try {
+      const name = (r.name || '').trim();
+      const leaderEmail = (r.leader_email || '').trim();
+
+      if (!name) throw new Error('Team name is required.');
+      if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate team name within this file.');
+      if (await db.prepare('SELECT id FROM teams WHERE lower(name) = lower(?)').get(name)) {
+        throw new Error('A team with that name already exists.');
+      }
+      let leader_user_id = null;
+      if (leaderEmail) {
+        const leader = userByEmail.get(leaderEmail.toLowerCase());
+        if (!leader) throw new Error(`No user found with email "${leaderEmail}".`);
+        if (!['leader', 'admin', 'super_admin'].includes(leader.role)) throw new Error('The team leader must be a Leader, Admin, or Super Admin.');
+        leader_user_id = leader.id;
+      }
+
+      seenNames.add(name.toLowerCase());
+      const id = uuid();
+      await db.prepare(`INSERT INTO teams (id, name, leader_user_id, created_by, updated_by) VALUES (?, ?, ?, ?, ?)`)
+        .run(id, name, leader_user_id, req.user.id, req.user.id);
+      await recordAudit({ tableName: 'teams', recordId: id, fieldName: 'created', newValue: name, changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Bulk import' });
+      results.push({ row: i + 1, success: true });
+    } catch (e) {
+      results.push({ row: i + 1, success: false, error: e.message });
+    }
+  }
+  res.json({ results });
+}));
+
 router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM teams WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'Team not found.' });

@@ -23,11 +23,46 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
     await db.prepare(`INSERT INTO categories (id, name, description, created_by, updated_by) VALUES (?, ?, ?, ?, ?)`)
       .run(id, name.trim(), description || null, req.user.id, req.user.id);
   } catch (e) {
-    if (String(e.message).includes('UNIQUE')) return res.status(409).json({ error: 'A category with this name already exists.' });
+    // Postgres's unique_violation code (23505) — see the identical comment in taskTypes.js's POST / for
+    // why this can't check e.message for 'UNIQUE' anymore (that was SQLite's error text).
+    if (e.code === '23505') return res.status(409).json({ error: 'A category with this name already exists.' });
     throw e;
   }
   await recordAudit({ tableName: 'categories', recordId: id, fieldName: 'created', newValue: name, changedBy: req.user.id, changedByName: req.user.full_name });
   res.status(201).json({ category: await db.prepare('SELECT * FROM categories WHERE id = ?').get(id) });
+}));
+
+/** POST /api/categories/import — bulk import from the Admin page's CSV template, same validation as
+ *  the single POST / above, per-row so one bad row doesn't stop the rest. */
+router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const seenNames = new Set();
+  const results = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    try {
+      const name = (r.name || '').trim();
+      const description = (r.description || '').trim() || null;
+      if (!name) throw new Error('Category name is required.');
+      if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate category name within this file.');
+
+      const id = uuid();
+      try {
+        await db.prepare(`INSERT INTO categories (id, name, description, created_by, updated_by) VALUES (?, ?, ?, ?, ?)`)
+          .run(id, name, description, req.user.id, req.user.id);
+      } catch (e) {
+        if (e.code === '23505') throw new Error('A category with this name already exists.');
+        throw e;
+      }
+      seenNames.add(name.toLowerCase());
+      await recordAudit({ tableName: 'categories', recordId: id, fieldName: 'created', newValue: name, changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Bulk import' });
+      results.push({ row: i + 1, success: true });
+    } catch (e) {
+      results.push({ row: i + 1, success: false, error: e.message });
+    }
+  }
+  res.json({ results });
 }));
 
 /** PATCH /api/categories/:id — rename, edit description, or deactivate. */

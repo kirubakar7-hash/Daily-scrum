@@ -265,3 +265,82 @@ test('scrum — only Super Admin can delete a task they didn\'t create themselve
   const allowedForSuperAdmin = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}`, { method: 'DELETE', headers: authed(saLogin.token) });
   assert.equal(allowedForSuperAdmin.status, 200, 'Super Admin must be able to delete any task, regardless of who created it');
 });
+
+test('import — users: one valid row succeeds, one row with a pre-existing email fails, both reported per-row', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const res = await fetch(`${baseUrl}/api/users/import`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ rows: [
+      { full_name: 'Imported Person', email: 'imported1@test.local', password: 'ImportPass123', role: 'employee' },
+      { full_name: 'Duplicate', email: 'admin@test.local', password: 'ImportPass123', role: 'employee' },
+    ] }),
+  });
+  assert.equal(res.status, 200);
+  const { results } = await res.json();
+  assert.equal(results[0].success, true, 'a valid new row must succeed');
+  assert.equal(results[1].success, false, 'a row reusing an existing email must fail');
+  assert.match(results[1].error, /already exists/i);
+
+  const loginAsImported = await login('imported1@test.local', 'ImportPass123');
+  assert.equal(loginAsImported.status, 200, 'the imported user must actually be able to log in');
+});
+
+test('import — teams: valid row succeeds, row with an unknown leader email fails', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const res = await fetch(`${baseUrl}/api/teams/import`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ rows: [
+      { name: 'Imported Team', leader_email: 'admin@test.local' },
+      { name: 'Bad Leader Team', leader_email: 'nobody-such@test.local' },
+    ] }),
+  });
+  const { results } = await res.json();
+  assert.equal(results[0].success, true);
+  assert.equal(results[1].success, false);
+  assert.match(results[1].error, /no user found/i);
+});
+
+test('import — task types: valid row succeeds, row with an invalid mechanic fails', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const res = await fetch(`${baseUrl}/api/task-types/import`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ rows: [
+      { name: 'Imported Type', mechanic: 'adhoc' },
+      { name: 'Bad Mechanic Type', mechanic: 'sometimes' },
+    ] }),
+  });
+  const { results } = await res.json();
+  assert.equal(results[0].success, true);
+  assert.equal(results[1].success, false);
+});
+
+test('import — categories: valid row succeeds, duplicate name within the same file fails', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const res = await fetch(`${baseUrl}/api/categories/import`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ rows: [
+      { name: 'Imported Category', description: 'A test category' },
+      { name: 'Imported Category', description: 'Same name again' },
+    ] }),
+  });
+  const { results } = await res.json();
+  assert.equal(results[0].success, true);
+  assert.equal(results[1].success, false, 'a duplicate name within the same file must be caught, not just against existing rows');
+  assert.match(results[1].error, /duplicate/i);
+});
+
+test('import — recurring tasks: assigns by employee email, reports rows whose emails match nobody', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const res = await fetch(`${baseUrl}/api/recurring-tasks/import`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ rows: [
+      { title: 'Imported recurring task', employee_emails: 'employee@test.local; nobody-such@test.local', frequency: 'Daily' },
+      { title: 'Nobody matches', employee_emails: 'nobody-such@test.local' },
+    ] }),
+  });
+  const { results } = await res.json();
+  assert.equal(results[0].success, true, 'the row succeeds because one of its two listed emails (employee@test.local) resolves, even though the other does not');
+  assert.match(results[0].note, /1 of 2/, 'the partial-match note should say how many of the listed people actually got the task');
+  assert.equal(results[1].success, false);
+  assert.match(results[1].error, /none of the listed emails/i);
+});
