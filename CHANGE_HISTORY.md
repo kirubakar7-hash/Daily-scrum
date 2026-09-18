@@ -115,3 +115,13 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Verified live:** on the real production app, selected a real task via its checkbox and confirmed "Delete 1 task" appears correctly in the toolbar with the right count — then cleared the selection rather than actually deleting it, same reasoning as the single-row verification above.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-18
+**Change:** Permanently deleted every task/commitment record in the system (9 commitments, and the 2 requests tied to them — a request can't exist without the commitment it's about). This emptied My Tasks, Team Tasks, and the Dashboard's task counts for everyone. Users, teams, task types, categories, recurring-activity templates, and the audit log itself were not touched.
+**Reason:** Explicit request, confirmed twice after I clarified the scope and consequences — Team History is not a separate archive, it's a filtered view of the same live task data used everywhere else in the app, so "delete team history" meant deleting the actual task records themselves, including anything still Pending or In Progress at the time.
+**Safety net taken first:** backed up all 9 commitments and 2 requests, exactly as they were, to `backups/commitments-before-full-delete-2026-09-18.json` before deleting anything. This file is not committed to GitHub (matches the existing `.gitignore` rule for anything containing real people's data) — it only exists on this machine. If any of this data needs to come back, that file has everything needed to restore it.
+**How it was done:** a one-off script (not kept in the repo, since this isn't a repeatable operation) deleted `requests` then `commitments` inside a single transaction, and wrote one summary entry to the audit log (`table_name='commitments', field_name='bulk_deleted'`) recording that this happened, who did it, and why — since this bypassed the app's normal one-task-at-a-time delete flow, which is the only place that writes audit entries automatically.
+**Verified live:** Dashboard now shows 0 Pending/In Progress/Completed/Support Required (Active Users still 6, Teams still 1 — unaffected). The Audit Log shows the new "Task — Bulk Deleted" entry at the top, above the pre-existing individual deletion history, which is untouched.
+**Cost:** None.
