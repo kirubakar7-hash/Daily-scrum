@@ -27,7 +27,7 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
   if (!name || !name.trim()) return res.status(400).json({ error: 'Main Task name is required.' });
   if (category_id) {
     const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(category_id);
-    if (!category) return res.status(400).json({ error: 'That category is no longer available. Choose another.' });
+    if (!category) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
   }
   const id = uuid();
   try {
@@ -62,7 +62,7 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
       let category_id = null;
       if (categoryName) {
         category_id = categoryByName.get(categoryName.toLowerCase());
-        if (!category_id) throw new Error(`Category "${categoryName}" was not found.`);
+        if (!category_id) throw new Error(`Subtask "${categoryName}" was not found.`);
       }
 
       const id = uuid();
@@ -91,7 +91,7 @@ router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (re
   if (name !== undefined && !name.trim()) return res.status(400).json({ error: 'Main Task name is required.' });
   if (category_id !== undefined && category_id) {
     const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(category_id);
-    if (!category) return res.status(400).json({ error: 'That category is no longer available. Choose another.' });
+    if (!category) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
   }
   const after = {
     name: name !== undefined ? name.trim() : before.name,

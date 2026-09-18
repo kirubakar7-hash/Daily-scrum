@@ -126,7 +126,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   const selectableTasks = useMemo(() => filteredTasks.filter((t) => !isRowReadOnly(t)), [filteredTasks, readOnly, canActOn]);
 
   function exportCsv() {
-    const header = ['Task', 'Employee', 'Type', 'Category', 'Main Task', 'Priority', 'Due', 'Status'];
+    const header = ['Task', 'Employee', 'Type', 'Subtask', 'Main Task', 'Priority', 'Due', 'Status'];
     const lines = [header.join(',')].concat(
       filteredTasks.map((t) => [t.description, t.employee_name, t.task_type_name || t.type, t.category_name || '', t.main_task_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
     );
@@ -220,7 +220,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
               <option value="adhoc">Ad-hoc</option>
             </Select>
             <Select value={filters.category} onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}>
-              <option value="">All categories</option>
+              <option value="">All subtasks</option>
               {categoryOptions.map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
             <Select value={filters.mainTask} onChange={(e) => setFilters((f) => ({ ...f, mainTask: e.target.value }))}>
@@ -308,7 +308,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                 <th className="py-2 pr-4">Task</th>
                 <th className="py-2 pr-4">Employee</th>
                 <th className="py-2 pr-4">Type</th>
-                <th className="py-2 pr-4">Category</th>
+                <th className="py-2 pr-4">Subtask</th>
                 <th className="py-2 pr-4">Main Task</th>
                 <th className="py-2 pr-4">Priority</th>
                 <th className="py-2 pr-4">Due</th>
@@ -619,7 +619,7 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
       setTaskTypes(active);
       setTaskTypeId((v) => v || active.find((t) => t.mechanic === 'adhoc')?.id || active[0]?.id || '');
     }).catch(() => setLoadError("Couldn't load Task Types — try closing and reopening this form."));
-    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => setLoadError("Couldn't load Categories — try closing and reopening this form."));
+    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => setLoadError("Couldn't load Subtasks — try closing and reopening this form."));
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => setLoadError("Couldn't load Main Tasks — try closing and reopening this form."));
   }, []);
 
@@ -670,7 +670,7 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
         <Select label="Type" value={taskTypeId} onChange={(e) => setTaskTypeId(e.target.value)}>
           {taskTypes.map((t) => <option key={t.id} value={t.id}>{t.name}{t.mechanic === 'recurring' ? ' (repeats)' : ''}</option>)}
         </Select>
-        <Select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+        <Select label="Subtask" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
           <option value="">None</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>

@@ -55,7 +55,7 @@ async function createRecurringTask(b, req) {
   let categoryId = b.category_id || null;
   if (categoryId) {
     const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
-    if (!category) throw new Error('That category is no longer available. Choose another.');
+    if (!category) throw new Error('That subtask is no longer available. Choose another.');
   }
 
   let mainTaskId = b.main_task_id || null;
@@ -149,7 +149,7 @@ router.post('/import', asyncHandler(async (req, res) => {
       const categoryName = (r.category_name || '').trim();
       if (categoryName) {
         category_id = categoryByName.get(categoryName.toLowerCase());
-        if (!category_id) throw new Error(`Category "${categoryName}" was not found.`);
+        if (!category_id) throw new Error(`Subtask "${categoryName}" was not found.`);
       }
       let main_task_id = null;
       const mainTaskName = (r.main_task_name || '').trim();

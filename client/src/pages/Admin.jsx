@@ -11,7 +11,7 @@ const TABS = [
   ['Users', Users],
   ['Teams', UsersRound],
   ['Task Types', Tag],
-  ['Categories', Tags],
+  ['Subtasks', Tags],
   ['Main Tasks', ListTree],
   ['Recurring Tasks', Repeat],
 ];
@@ -46,7 +46,7 @@ export default function Admin() {
         {tab === 'Users' && <UsersTab />}
         {tab === 'Teams' && <TeamsTab />}
         {tab === 'Task Types' && <TaskTypesTab />}
-        {tab === 'Categories' && <CategoriesTab />}
+        {tab === 'Subtasks' && <CategoriesTab />}
         {tab === 'Main Tasks' && <MainTasksTab />}
         {tab === 'Recurring Tasks' && <RecurringTasksTab />}
       </div>
@@ -207,7 +207,7 @@ function CategoriesTab() {
         </p>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <ImportButton
-            entityLabel="Categories"
+            entityLabel="Subtasks"
             headers={['name', 'description']}
             example={{ name: 'Finance', description: 'Accounting and financial reporting tasks' }}
             endpoint="/categories/import"
@@ -216,12 +216,12 @@ function CategoriesTab() {
           <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add</Button>
         </div>
       </div>
-      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Category">
+      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Subtask">
         <div className="space-y-3">
-          <Input label="Category name" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input label="Subtask name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
           <ErrorBanner message={error} />
-          <Button onClick={create}><Plus className="w-4 h-4" /> Add Category</Button>
+          <Button onClick={create}><Plus className="w-4 h-4" /> Add Subtask</Button>
         </div>
       </Modal>
       <ErrorBanner message={loadError} />
@@ -320,7 +320,7 @@ function MainTasksTab() {
     <Card>
       <div className="flex items-start justify-between gap-3 mb-3">
         <p className="text-xs text-grey-400">
-          A grouping between Category and individual tasks — e.g. Category "Finance" contains Main Tasks like "FP&A" or "Accounts Payable" (a Finance Head), each of which contains the actual assignable tasks (Subtasks).
+          A grouping between Subtask and individual tasks — e.g. Subtask "Finance" contains Main Tasks like "FP&A" or "Accounts Payable" (a Finance Head), each of which contains the actual assignable tasks.
         </p>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <ImportButton
@@ -336,8 +336,8 @@ function MainTasksTab() {
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Main Task">
         <div className="space-y-3">
           <Input label="Main Task name" placeholder="e.g. FP&A" value={name} onChange={(e) => setName(e.target.value)} />
-          <Select label="Category (optional)" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">No category</option>
+          <Select label="Subtask (optional)" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">No subtask</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
           <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -348,7 +348,7 @@ function MainTasksTab() {
       <ErrorBanner message={loadError} />
       <div className="overflow-x-auto">
         <table className="w-full text-sm mt-3">
-          <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Main Task</th><th>Category</th><th>Status</th><th colSpan={2}></th></tr></thead>
+          <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Main Task</th><th>Subtask</th><th>Status</th><th colSpan={2}></th></tr></thead>
           <tbody>
             {items.map((mt, i) => (
               <tr key={mt.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
@@ -366,7 +366,7 @@ function MainTasksTab() {
                     value={mt.category_id || ''}
                     onChange={(e) => updateCategory(mt, e.target.value)}
                   >
-                    <option value="">No category</option>
+                    <option value="">No subtask</option>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </td>
@@ -802,8 +802,8 @@ function RecurringTasksTab() {
             {['Low', 'Medium', 'High'].map((p) => <option key={p} value={p}>{p}</option>)}
           </Select>
           <Input label="Starting" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          <Select label="Category (optional)" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">No category</option>
+          <Select label="Subtask (optional)" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">No subtask</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
           <Select label="Main Task (optional)" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
@@ -852,7 +852,7 @@ function RecurringTasksTab() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Task</th><th>Assigned to</th><th>Type</th><th>Category</th><th>Main Task</th><th>Frequency</th><th>Status</th><th></th></tr></thead>
+              <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Task</th><th>Assigned to</th><th>Type</th><th>Subtask</th><th>Main Task</th><th>Frequency</th><th>Status</th><th></th></tr></thead>
               <tbody>
                 {items.map((r, i) => (
                   <tr key={r.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>

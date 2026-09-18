@@ -139,7 +139,7 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   let categoryId = b.category_id || null;
   if (categoryId) {
     const chosenCategory = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
-    if (!chosenCategory) return res.status(400).json({ error: 'That category is no longer available. Choose another.' });
+    if (!chosenCategory) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
   }
 
   // Main Task sits one level under Category (Category "Finance" → Main Task "FP&A" → this task) — same

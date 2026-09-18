@@ -144,8 +144,8 @@ export default function History() {
                 <option value="completed">Completed</option>
                 <option value="support_required">Support Required</option>
               </Select>
-              <Select label="Category" value={filters.category_id} onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}>
-                <option value="">All categories</option>
+              <Select label="Subtask" value={filters.category_id} onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}>
+                <option value="">All subtasks</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </Select>
               <Select label="Main Task" value={filters.main_task_id} onChange={(e) => setFilters((f) => ({ ...f, main_task_id: e.target.value }))}>
@@ -237,7 +237,7 @@ export default function History() {
                       <th className="pr-3 font-semibold">Employee</th>
                       <th className="pr-3 font-semibold">Task</th>
                       <th className="pr-3 font-semibold">Type</th>
-                      <th className="pr-3 font-semibold">Category</th>
+                      <th className="pr-3 font-semibold">Subtask</th>
                       <th className="pr-3 font-semibold">Main Task</th>
                       <th className="pr-3 font-semibold">Status</th>
                       <th className="pr-3 font-semibold">Notes</th>

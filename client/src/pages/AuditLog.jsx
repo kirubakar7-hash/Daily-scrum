@@ -6,8 +6,8 @@ import HelpBanner from '../components/HelpBanner';
 
 const SUBJECT_LABELS = {
   commitments: 'Task', blockers: 'Blocker', actions: 'Action', escalations: 'Escalation',
-  departments: 'Department', teams: 'Team', users: 'User', categories: 'Category',
-  recurring_activities: 'Recurring task', task_types: 'Task type',
+  departments: 'Department', teams: 'Team', users: 'User', categories: 'Subtask',
+  recurring_activities: 'Recurring task', task_types: 'Task type', main_tasks: 'Main Task',
 };
 
 const FIELD_LABELS = {

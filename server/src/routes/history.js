@@ -142,7 +142,7 @@ router.get('/export.csv', asyncHandler(async (req, res) => {
   `;
   const rows = await db.prepare(sql).all(...params);
 
-  const header = ['Code', 'Date', 'Employee', 'Activity', 'Type', 'Task Type', 'Category', 'Main Task', 'Priority', 'Status', 'Due Date', 'Reason If Not Completed'];
+  const header = ['Code', 'Date', 'Employee', 'Activity', 'Type', 'Task Type', 'Subtask', 'Main Task', 'Priority', 'Status', 'Due Date', 'Reason If Not Completed'];
   // Guards against spreadsheet formula injection: a cell value starting with =, +, -, or @ is treated as
   // a formula by Excel/Sheets when the file is opened. Any employee can type free text into a task
   // description, so this file is the one place that text leaves React's safe rendering and lands
