@@ -85,3 +85,23 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Verification:** `https://daily-scrum-monitoring-production.up.railway.app` now returns Railway's own "no active deployment" page — confirmed no longer serving traffic. `https://daily-scrum-one.vercel.app` remains fully live.
 **Current architecture:** Code on GitHub (`kirubakar7-hash/Daily-scrum`) → Vercel (frontend + backend, one serverless deployment) → Neon Postgres (database). No Railway involvement in the running app anymore.
 **Cost:** Neon and Vercel free tiers cover the new setup. Railway's own billing status wasn't re-verified here — worth checking Railway's dashboard directly to confirm the stopped service isn't accruing any charges, before deciding whether/when to delete the project entirely.
+
+---
+
+**Date:** 2026-09-18
+**Change:** Deleted the Railway project entirely (`railway delete`), per explicit follow-up request. Confirmed via the Railway dashboard: 0 active projects, 1 deleted.
+**Reason:** User's explicit instruction, after confirming the Vercel cutover works correctly with real data.
+**What this means:** The Railway volume (the original SQLite file) is gone along with the project. The data itself is not lost — it was independently, field-by-field verified as fully migrated into Neon (see the two earlier entries), and local backup files still exist under `backups/` (including one taken immediately before the migration). But this was the last copy of the *SQLite* file anywhere — there is no going back to the old SQLite-based setup after this point, only forward from the Neon/Vercel one.
+**Cost:** Removes any question of ongoing Railway charges — noted as unverified in the previous entry, moot now.
+
+---
+
+**Date:** 2026-09-18
+**Change:** Super Admin can now delete any task outright, regardless of who created it. Every other leader-tier role (Leader, Admin) keeps the existing, unchanged restriction — they can still only delete a task they typed in themselves.
+**Reason:** Explicit request ("add entire task deleted button in super admin access alone").
+**Files:** `server/src/routes/scrum.js` (`DELETE /api/scrum/commitments/:id` — the `created_by` ownership check is now skipped specifically for `super_admin`), `client/src/components/TeamTaskList.jsx` (the Delete button, shared across My Tasks/Team Tasks/Daily Scrum's task list, is no longer disabled for Super Admin on tasks it didn't create; tooltip text updated to say so).
+**Unchanged, deliberately:** the referential-integrity check that blocks deleting a task that already generated a carry-forward follow-up task still applies to everyone, including Super Admin — that one isn't a permissions rule, it's a real foreign-key constraint (deleting it would leave the follow-up task's `carried_forward_from_id` pointing at nothing).
+**Tests:** New test `scrum — only Super Admin can delete a task they didn't create themselves; other leader-tier roles cannot` in `server/test/api.integration.test.js`, confirming both halves: an Admin who didn't create the task is still blocked (403, unchanged), and Super Admin can delete it (200, new). Full suite: 43/43 passing.
+**Verified live:** on the real production app at `daily-scrum-one.vercel.app`, logged in as the real Super Admin account — the Delete button now shows on tasks belonging to other real employees (previously only shown for self-created tasks), and the tooltip correctly reads "As Super Admin, you can delete any task." Did not actually delete a real task during this check, to avoid destroying genuine business records just to test — the automated test above already exercises the real delete path end-to-end against disposable test data.
+**Deployment:** Live.
+**Cost:** None.
