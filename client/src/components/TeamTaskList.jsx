@@ -92,6 +92,13 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
     return runBulk(ids, (id) => api.post(`/scrum/commitments/${id}/carry-forward`, { new_due_date: newDate }), `Rescheduled ${ids.length} task${ids.length === 1 ? '' : 's'} to ${newDate}.`);
   }
 
+  // Bulk delete is Super Admin only, same restriction as the per-row Delete button — the server enforces
+  // this too, so this is purely about not showing a control that would just fail for anyone else.
+  function bulkDelete() {
+    const ids = [...selectedIds];
+    return runBulk(ids, (id) => api.del(`/scrum/commitments/${id}`), `Deleted ${ids.length} task${ids.length === 1 ? '' : 's'}.`);
+  }
+
   async function remove(task) {
     setDeleteError('');
     try {
@@ -248,6 +255,14 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
               Reschedule → {label}
             </Button>
           ))}
+          {user.role === 'super_admin' && (
+            <DeleteButton
+              label={`Delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}`}
+              confirmLabel={`Permanently delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}?`}
+              disabled={bulkBusy}
+              onConfirm={bulkDelete}
+            />
+          )}
           <button onClick={() => setSelectedIds(new Set())} className="text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors ml-1">
             Clear selection
           </button>
