@@ -152,9 +152,11 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
           By due date. Completed tasks move to History automatically.
           Click a due date to change it — <span className="text-amber-700 font-semibold">amber</span> means it's been changed from the original.
           Every change shows a <span className="text-emerald-600 font-semibold">Saved</span> confirmation.
-          {['leader', 'admin', 'super_admin'].includes(user.role)
-            ? ' You can delete a task you created yourself — not one someone else logged.'
-            : ' Only a Leader or Admin can delete a task.'}
+          {user.role === 'super_admin'
+            ? ' As Super Admin, you can delete any task.'
+            : ['leader', 'admin'].includes(user.role)
+              ? ' You can delete a task you created yourself — not one someone else logged.'
+              : ' Only a Leader or Admin can delete a task.'}
           {' '}Tick the checkboxes to complete or reschedule several tasks at once.
         </p>
         {!readOnly && showCreate && (
@@ -364,7 +366,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                       {!rowReadOnly && (
                         <DeleteButton
                           confirmLabel="Delete?"
-                          disabled={t.created_by !== user.id || !['leader', 'admin', 'super_admin'].includes(user.role)}
+                          disabled={user.role === 'super_admin' ? false : (t.created_by !== user.id || !['leader', 'admin'].includes(user.role))}
                           onConfirm={() => remove(t)}
                         />
                       )}

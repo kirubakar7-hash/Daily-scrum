@@ -247,3 +247,21 @@ test('users — deleting a person with recurring-task assignments or scrum sessi
   const blockedSession = await fetch(`${baseUrl}/api/users/${withSession}`, { method: 'DELETE', headers: authed(saLogin.token) });
   assert.equal(blockedSession.status, 409, 'a user with a scrum session recorded must not be hard-deleted');
 });
+
+test('scrum — only Super Admin can delete a task they didn\'t create themselves; other leader-tier roles cannot', async () => {
+  const { body: empLogin } = await login('employee@test.local', 'EmpPass123');
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+
+  const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: authed(empLogin.token),
+    body: JSON.stringify({ description: 'Employee-created task', type: 'adhoc', due_date: '2026-09-20' }),
+  });
+  const { commitment } = await createRes.json();
+
+  const blockedForAdmin = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}`, { method: 'DELETE', headers: authed(adminLogin.token) });
+  assert.equal(blockedForAdmin.status, 403, 'an admin who did not create the task must still be blocked, unchanged from before');
+
+  const allowedForSuperAdmin = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}`, { method: 'DELETE', headers: authed(saLogin.token) });
+  assert.equal(allowedForSuperAdmin.status, 200, 'Super Admin must be able to delete any task, regardless of who created it');
+});

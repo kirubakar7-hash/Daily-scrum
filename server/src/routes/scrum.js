@@ -374,7 +374,8 @@ router.patch('/commitments/:id', asyncHandler(async (req, res) => {
 
 /** DELETE /api/scrum/commitments/:id — a Leader/Admin can remove a task they typed in themselves, by
  *  mistake. Never allowed for a task an employee logged for their own day, or an auto-generated
- *  support task — those stay permanent, matching the rest of the app's no-erase design for real activity. */
+ *  support task — those stay permanent, matching the rest of the app's no-erase design for real activity.
+ *  Super Admin is the one exception: they can delete any task outright, regardless of who created it. */
 router.delete('/commitments/:id', asyncHandler(async (req, res) => {
   if (!['leader', 'admin', 'super_admin'].includes(req.user.role)) {
     return res.status(403).json({ error: 'Only a Leader or Admin can delete a task.' });
@@ -382,7 +383,7 @@ router.delete('/commitments/:id', asyncHandler(async (req, res) => {
   const commitment = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(req.params.id);
   if (!commitment) return res.status(404).json({ error: 'Task not found.' });
   if (!assertCanEdit(req, res, commitment.employee_id)) return;
-  if (commitment.created_by !== req.user.id) {
+  if (req.user.role !== 'super_admin' && commitment.created_by !== req.user.id) {
     return res.status(403).json({ error: "You can only delete a task you created yourself — not something someone logged for their own day." });
   }
   if (commitment.carried_forward_to_id) {
