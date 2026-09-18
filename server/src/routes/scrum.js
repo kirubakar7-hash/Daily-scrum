@@ -98,12 +98,13 @@ router.get('/today', asyncHandler(async (req, res) => {
 router.get('/my-tasks', asyncHandler(async (req, res) => {
   const date = req.query.date || today();
   const rows = await db.prepare(`
-    SELECT c.*, u.full_name AS employee_name, ra.frequency AS recurring_frequency, tt.name AS task_type_name, cat.name AS category_name
+    SELECT c.*, u.full_name AS employee_name, ra.frequency AS recurring_frequency, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name
     FROM commitments c
     JOIN users u ON u.id = c.employee_id
     LEFT JOIN recurring_activities ra ON ra.id = c.recurring_activity_id
     LEFT JOIN task_types tt ON tt.id = c.task_type_id
     LEFT JOIN categories cat ON cat.id = c.category_id
+    LEFT JOIN main_tasks mt ON mt.id = c.main_task_id
     WHERE c.employee_id = ? AND c.is_active = 1 AND c.status != 'completed'
     ORDER BY c.due_date, c.created_at DESC
   `).all(req.user.id);
@@ -141,6 +142,14 @@ router.post('/commitments', asyncHandler(async (req, res) => {
     if (!chosenCategory) return res.status(400).json({ error: 'That category is no longer available. Choose another.' });
   }
 
+  // Main Task sits one level under Category (Category "Finance" → Main Task "FP&A" → this task) — same
+  // optional/independent treatment as Category itself.
+  let mainTaskId = b.main_task_id || null;
+  if (mainTaskId) {
+    const chosenMainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(mainTaskId);
+    if (!chosenMainTask) return res.status(400).json({ error: 'That Main Task is no longer available. Choose another.' });
+  }
+
   // The recurrence rule can arrive as a full { interval, unit, weekdays, end } object (the calendar-style
   // picker), or — for backward compatibility with older clients — as one of the original fixed frequency
   // strings, which maps onto an equivalent rule.
@@ -162,9 +171,9 @@ router.post('/commitments', asyncHandler(async (req, res) => {
       recurringActivityId = uuid();
       const seriesStart = b.due_date || b.scrum_date || today();
       await db.prepare(`
-        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, priority, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(recurringActivityId, employeeId, b.description.trim(), describeRule(rule), JSON.stringify(rule), seriesStart, taskTypeId, categoryId, b.priority || 'Medium', req.user.id);
+        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, priority, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(recurringActivityId, employeeId, b.description.trim(), describeRule(rule), JSON.stringify(rule), seriesStart, taskTypeId, categoryId, mainTaskId, b.priority || 'Medium', req.user.id);
     }
   }
 
@@ -173,11 +182,11 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   const dueDate = b.due_date || date;
   await db.prepare(`
     INSERT INTO commitments (
-      id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, priority, expected_outcome,
+      id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, priority, expected_outcome,
       start_date, due_date, original_due_date, due_time, estimated_effort, dependency, dependency_owner, remarks, created_by, updated_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    id, employeeId, date, b.description.trim(), type, recurringActivityId, taskTypeId, categoryId, b.priority || 'Medium', b.expected_outcome || null,
+    id, employeeId, date, b.description.trim(), type, recurringActivityId, taskTypeId, categoryId, mainTaskId, b.priority || 'Medium', b.expected_outcome || null,
     b.start_date || date, dueDate, dueDate, b.due_time || null, b.estimated_effort || null, b.dependency || null,
     b.dependency_owner || null, b.remarks || null, req.user.id, req.user.id
   );
@@ -327,11 +336,11 @@ router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
           await db.transaction(async () => {
             await db.prepare(`
               INSERT INTO commitments (
-                id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, priority, expected_outcome,
+                id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, priority, expected_outcome,
                 start_date, due_date, original_due_date, estimated_effort, dependency, dependency_owner, created_by, updated_by
-              ) VALUES (?, ?, ?, ?, 'recurring', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, 'recurring', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-              newId, before.employee_id, nextDate, before.description, activity.id, before.task_type_id, before.category_id, before.priority, before.expected_outcome || null,
+              newId, before.employee_id, nextDate, before.description, activity.id, before.task_type_id, before.category_id, before.main_task_id, before.priority, before.expected_outcome || null,
               nextDate, nextDate, nextDate, before.estimated_effort || null, before.dependency || null, before.dependency_owner || null,
               req.user.id, req.user.id
             );

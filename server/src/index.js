@@ -18,6 +18,7 @@ import searchRoutes from './routes/search.js';
 import taskTypeRoutes from './routes/taskTypes.js';
 import recurringTaskRoutes from './routes/recurringTasks.js';
 import categoryRoutes from './routes/categories.js';
+import mainTaskRoutes from './routes/mainTasks.js';
 import requestRoutes from './routes/requests.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -62,6 +63,7 @@ app.use('/api/search', searchRoutes);
 app.use('/api/task-types', taskTypeRoutes);
 app.use('/api/recurring-tasks', recurringTaskRoutes);
 app.use('/api/categories', categoryRoutes);
+app.use('/api/main-tasks', mainTaskRoutes);
 app.use('/api/requests', requestRoutes);
 
 // In production this same server also serves the built React app, so the whole thing is one deployable

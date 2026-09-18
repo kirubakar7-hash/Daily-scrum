@@ -41,6 +41,21 @@ CREATE TABLE IF NOT EXISTS categories (
   updated_by TEXT
 );
 
+-- A grouping layer between Category and individual tasks — e.g. Category "Finance" contains several Main
+-- Tasks like "FP&A" or "Accounts Payable", each of which contains several actual assignable tasks
+-- (Subtasks). Modeled on categories' own shape; category_id is what "parked under a category" means.
+CREATE TABLE IF NOT EXISTS main_tasks (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  category_id TEXT REFERENCES categories(id),
+  description TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT now_utc(),
+  updated_at TEXT NOT NULL DEFAULT now_utc(),
+  created_by TEXT,
+  updated_by TEXT
+);
+
 CREATE TABLE IF NOT EXISTS teams (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -105,6 +120,7 @@ CREATE TABLE IF NOT EXISTS recurring_activities (
   occurrences_created INTEGER NOT NULL DEFAULT 1,
   task_type_id TEXT REFERENCES task_types(id),
   category_id TEXT REFERENCES categories(id),
+  main_task_id TEXT REFERENCES main_tasks(id),
   priority TEXT NOT NULL DEFAULT 'Medium',
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT now_utc(),
@@ -151,7 +167,8 @@ CREATE TABLE IF NOT EXISTS commitments (
   created_by TEXT,
   updated_by TEXT,
   task_type_id TEXT REFERENCES task_types(id),
-  category_id TEXT REFERENCES categories(id)
+  category_id TEXT REFERENCES categories(id),
+  main_task_id TEXT REFERENCES main_tasks(id)
 );
 
 CREATE TABLE IF NOT EXISTS requests (
@@ -233,6 +250,8 @@ CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);
 CREATE INDEX IF NOT EXISTS idx_requests_requested_by ON requests(requested_by);
 CREATE INDEX IF NOT EXISTS idx_requests_resolved_by ON requests(resolved_by);
 CREATE INDEX IF NOT EXISTS idx_audit_changed_at ON audit_logs(changed_at);
+CREATE INDEX IF NOT EXISTS idx_commitments_main_task ON commitments(main_task_id);
+CREATE INDEX IF NOT EXISTS idx_main_tasks_category ON main_tasks(category_id);
 
 -- Seed the two protected task types the app's recurrence engine and dashboard split rely on — every
 -- installation needs at least one active type per mechanic, so these can be renamed but not deleted.

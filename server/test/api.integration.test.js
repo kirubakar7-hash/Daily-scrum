@@ -344,3 +344,37 @@ test('import — recurring tasks: assigns by employee email, reports rows whose 
   assert.equal(results[1].success, false);
   assert.match(results[1].error, /none of the listed emails/i);
 });
+
+test('main tasks — a recurring task tagged with a Category and Main Task carries both onto its seed commitment, and the Main Task cannot be deleted while in use', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+
+  const categoryRes = await fetch(`${baseUrl}/api/categories`, {
+    method: 'POST', headers: authed(saLogin.token), body: JSON.stringify({ name: 'Finance' }),
+  });
+  const { category } = await categoryRes.json();
+
+  const mainTaskRes = await fetch(`${baseUrl}/api/main-tasks`, {
+    method: 'POST', headers: authed(saLogin.token), body: JSON.stringify({ name: 'FP&A', category_id: category.id }),
+  });
+  assert.equal(mainTaskRes.status, 201);
+  const { main_task: mainTask } = await mainTaskRes.json();
+  assert.equal(mainTask.category_id, category.id);
+
+  const recurringRes = await fetch(`${baseUrl}/api/recurring-tasks`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({
+      title: 'Monthly close checklist', employee_ids: [ids.employeeId],
+      category_id: category.id, main_task_id: mainTask.id, frequency: 'Daily',
+    }),
+  });
+  assert.equal(recurringRes.status, 201);
+  const { recurring_tasks: [activity] } = await recurringRes.json();
+  assert.equal(activity.main_task_id, mainTask.id, 'the recurring template itself must carry the Main Task');
+
+  const seedCommitment = await db.prepare('SELECT * FROM commitments WHERE recurring_activity_id = ?').get(activity.id);
+  assert.equal(seedCommitment.category_id, category.id, 'the seed commitment must carry the Category, same as it always has');
+  assert.equal(seedCommitment.main_task_id, mainTask.id, 'the seed commitment must also carry the Main Task, not just the recurring_activities row');
+
+  const blockedDelete = await fetch(`${baseUrl}/api/main-tasks/${mainTask.id}`, { method: 'DELETE', headers: authed(saLogin.token) });
+  assert.equal(blockedDelete.status, 409, 'a Main Task already used by a task or template must be blocked from deletion, like Category and Task Type');
+});
