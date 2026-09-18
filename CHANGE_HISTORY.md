@@ -105,3 +105,13 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Verified live:** on the real production app at `daily-scrum-one.vercel.app`, logged in as the real Super Admin account — the Delete button now shows on tasks belonging to other real employees (previously only shown for self-created tasks), and the tooltip correctly reads "As Super Admin, you can delete any task." Did not actually delete a real task during this check, to avoid destroying genuine business records just to test — the automated test above already exercises the real delete path end-to-end against disposable test data.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-18
+**Change:** Added a "Delete N tasks" bulk action to the same checkbox-based multi-select toolbar that already has "Mark Completed" and "Reschedule", right next to them — Super Admin only, matching the single-row Delete button added earlier today.
+**Reason:** Explicit follow-up request pointing at that toolbar directly.
+**Files:** `client/src/components/TeamTaskList.jsx` — a `bulkDelete()` function reusing the same `runBulk` helper `bulkComplete`/`bulkReschedule` already use, and the existing `DeleteButton` component (same two-click confirm pattern used for the single-row delete) for the toolbar control itself, so no new UI pattern was introduced. The button only renders for `super_admin`; the server independently enforces the same restriction per task either way, so this is UI-only gating, not the actual security boundary.
+**Verified live:** on the real production app, selected a real task via its checkbox and confirmed "Delete 1 task" appears correctly in the toolbar with the right count — then cleared the selection rather than actually deleting it, same reasoning as the single-row verification above.
+**Deployment:** Live.
+**Cost:** None.
