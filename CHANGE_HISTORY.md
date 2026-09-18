@@ -75,3 +75,13 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Verification:** `/api/health` responds correctly. Full live login attempt against the real migrated super-admin account (`Kirubakar.B@solidpro-es.com`) with a deliberately wrong password returned the correct "Not logged in" rejection rather than a server error — proving the deployed function reaches Neon, finds the real migrated user, and runs the real bcrypt comparison correctly. Did not attempt a real successful login, since the real password isn't something I have or should have.
 **Deployment:** Live at `https://daily-scrum-one.vercel.app`. Railway is untouched and still running the old SQLite-based app in parallel — decommissioning it is the next step, planned but not yet done at the time of this entry.
 **Cost:** None — Vercel's free Hobby tier.
+
+---
+
+**Date:** 2026-09-18
+**Change:** Stopped the Railway deployment (`railway down`), completing the cutover to Vercel. Kirubakar personally logged into the live Vercel app with real credentials and confirmed the dashboard and data look correct before this step was taken.
+**Reason:** Explicit request to remove Railway as the hosting platform now that Vercel is confirmed working against the real, migrated data.
+**What was and wasn't removed:** Only the running deployment was stopped (`railway down`), deliberately, not the Railway project, service, or its volume — the volume still holds the original SQLite file (and `backups/` has dated snapshots, including one from just before this migration) as a rollback path if anything is ever discovered wrong with the new Postgres/Vercel setup. Nothing was deleted. Restarting Railway (`railway up`, or pushing a commit again) would bring the old SQLite-based app back exactly as it was.
+**Verification:** `https://daily-scrum-monitoring-production.up.railway.app` now returns Railway's own "no active deployment" page — confirmed no longer serving traffic. `https://daily-scrum-one.vercel.app` remains fully live.
+**Current architecture:** Code on GitHub (`kirubakar7-hash/Daily-scrum`) → Vercel (frontend + backend, one serverless deployment) → Neon Postgres (database). No Railway involvement in the running app anymore.
+**Cost:** Neon and Vercel free tiers cover the new setup. Railway's own billing status wasn't re-verified here — worth checking Railway's dashboard directly to confirm the stopped service isn't accruing any charges, before deciding whether/when to delete the project entirely.
