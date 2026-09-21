@@ -246,3 +246,29 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** New test `hierarchy — Admin's own Dashboard counts every active user, org-wide, not just Employees` in `server/test/api.integration.test.js`. Full suite: 61/61 passing.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Implemented the remaining P1–P3 audit findings (20 of 24 remaining items; 4 deliberately deferred — see below) in one coordinated batch: 4 backend fixes done directly, 7 frontend UX fixes done via parallel background agents (one per disjoint file group), reviewed and verified together.
+**Reason:** Explicit request to implement the completed audit's backlog in parallel rather than one finding at a time.
+**Backend (server/src/lib/scope.js, routes/users.js, routes/requests.js, routes/scrum.js, routes/dashboard.js):**
+- Org Dashboard's "Scrum Completed" KPI numerator now matches its denominator's population (`role='employee'`); its "By Team" employee count uses the same definition.
+- `canActOnEmployee` now refuses to act on a deactivated target (previously only the frontend picker hid them).
+- `assertValidManager` now rejects a "Reports To" change that would create a reporting-loop cycle, reusing `subordinateIds`.
+- Resolving an orphaned request now writes an audit entry instead of resolving silently.
+- Dashboard commitment-count queries now filter `is_active=1` (currently a no-op, defensive).
+**Bug found and fixed while verifying (not in the original audit):** `requests.commitment_id` is `NOT NULL` with no `ON DELETE` clause — deleting any task that ever had a request raised against it (support or due-date-change), resolved or still pending, failed with an unhandled foreign-key 500. Confirmed via a live repro before fixing. `DELETE /commitments/:id` now removes the task's request rows as part of the same delete; a still-pending request gets its own audit entry first so its outcome isn't lost.
+**Frontend, via 7 parallel agents (all reviewed before commit):**
+- All 6 Admin tabs brought to one standard: loading skeleton, empty state, Retry button, inline-edit error visibility, save confirmation, "Add X" button labels, unified delete-confirmation wording.
+- History/Audit Log: loading state, Retry button, success icon consistency.
+- My Tasks/Team Tasks: Senior Management's subtitle no longer promises actions it can't take.
+- Team Tasks' editable status dropdown now shares its color map with the read-only Badge (`ui.jsx` exports `badgeClassFor`) instead of a diverging local copy.
+- Close buttons unified on the lucide X icon (Modal/DrillDownPanel/WelcomeBanner).
+- Employee nav gained a Dashboard link; mobile nav now carries the same Guided Tour anchors as desktop.
+- Team Today: raw date format (matching the rest of the app); empty-team message points at Admin → Users and is only shown to a persona who can act on it.
+**Deliberately deferred (not completed in this batch):** Admin.jsx's Task Types tab still has the invisible-inline-error issue fixed elsewhere (agent scoped itself to only the 3 tabs the audit explicitly named); several Org Dashboard fields remain computed-but-unrendered (audit rated this optional polish); "Leaders may also dismiss an orphaned request" was intentionally left out — the audit's own recommendation, but it would expand what a Leader can act on, which needed a explicit decision rather than a bundled fix.
+**Database:** No schema change.
+**Tests:** 5 new backend tests (deactivated-employee protection, manager-cycle rejection, orphaned-request audit trail, resolved-request delete no longer 500s, pending-request-on-delete audit trail) plus 2 existing scope.test.js assertions moved into the integration suite where they now need real data. Full suite: 64/64 passing. `npm run build` clean.
+**Deployment:** Live (5 commits, pushed in sequence).
+**Cost:** None.
