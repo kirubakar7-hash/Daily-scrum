@@ -233,3 +233,16 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** New test `hierarchy — Team Today includes Leaders/Admins in the roster for wide-open roles, not just Employees` in `server/test/api.integration.test.js`. Full suite: 60/60 passing.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Fixed Admin's own Dashboard — same roster-narrowing bug as the Team Today P0 (`GET /dashboard/leader` counted `role='employee'` only), plus its heading said "My Team Today" even though it's meant to reflect the whole organization for an Admin.
+**Reason:** P1 finding from the full application audit.
+**Files:** `server/src/routes/dashboard.js` (`GET /leader`'s non-leader branch widened to every active user), `client/src/pages/Dashboard.jsx` (`LeaderDashboard` now takes a `role` prop; heading/team-count label say "Organization Today" / "people across the organization" for Admin specifically, unchanged for a real Leader).
+**Better opportunity taken:** the audit had flagged this as needing a product decision — give Admin the full read-only Org dashboard, or fix the Leader dashboard in place. Chose the latter: Admin keeps the richer, actionable Leader-dashboard shape (Leadership Attention Required panel, Status Email button) it already had, rather than losing that panel by moving to the Org dashboard, which has no equivalent.
+**Bug found and fixed while verifying:** `GET /dashboard/leader` 500'd unconditionally for every caller, Leader included — two of its queries referenced SELECT-list aliases (`c`, `total_count`, `adhoc_count`) inside `HAVING` clauses, which Postgres rejects (`column "c" does not exist`) even though the same SQL is valid in SQLite/MySQL. No test had ever called this endpoint before, so it went uncaught. Fixed both `HAVING` clauses to repeat the aggregate expression instead of the alias.
+**Database:** No schema change.
+**Tests:** New test `hierarchy — Admin's own Dashboard counts every active user, org-wide, not just Employees` in `server/test/api.integration.test.js`. Full suite: 61/61 passing.
+**Deployment:** Live.
+**Cost:** None.
