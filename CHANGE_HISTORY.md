@@ -272,3 +272,14 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** 5 new backend tests (deactivated-employee protection, manager-cycle rejection, orphaned-request audit trail, resolved-request delete no longer 500s, pending-request-on-delete audit trail) plus 2 existing scope.test.js assertions moved into the integration suite where they now need real data. Full suite: 64/64 passing. `npm run build` clean.
 **Deployment:** Live (5 commits, pushed in sequence).
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Admin → Users now shows the reporting hierarchy directly instead of a separate "Reports To" column — rows sort depth-first by manager (siblings alphabetical), each name is indented by its depth, and a compact "reports to" selector sits directly under the name in place of the old standalone column.
+**Reason:** Explicit request, after live-screenshotting the Users tab — with 6 real people across 2 reporting levels, the flat table plus a same-weight "Reports To" dropdown column required reading and mentally cross-referencing every row to see who reported to whom.
+**Files:** `client/src/pages/Admin.jsx` (`UsersTab` only) — new `sortedItems` memo (depth-first walk of `manager_id`, with a `visited` guard against a stray cycle in bad data, mirroring `subordinateIds()`'s defensive spirit server-side); the Reports To `<select>` moved into the Name cell, same value/onChange/options as before, restyled as a small caption instead of a boxed dropdown.
+**Database:** No schema change. **Security:** No backend or permission change — same `PATCH /users/:id` call, same data.
+**Tests:** Verified the sort/indent logic directly against the real 6-person dataset from the live screenshot (Kirubakar B → Anudeep → {Rajeshwari → Shreenidhi, Renuka → Jeyant}) — produces the expected top-to-bottom order and depth. `npm run build` clean. Not manually verified in the browser — doing so requires being logged in as an Admin/Super Admin, and per this project's standing rule I never enter a password into any field myself.
+**Deployment:** Live.
+**Cost:** None.
