@@ -12,7 +12,7 @@ process.env.JWT_SECRET = 'test-secret-not-for-production-use';
 process.env.NODE_ENV = 'test';
 
 const schema = await createTestSchema();
-const { db, closeDb } = await import('../src/db.js');
+const { db, closeDb, today } = await import('../src/db.js');
 const { app } = await import('../src/index.js');
 
 let server, baseUrl;
@@ -29,6 +29,42 @@ before(async () => {
   await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'employee')`)
     .run(employeeId, 'Test Employee', 'employee@test.local', bcrypt.hashSync('EmpPass123', 10));
   Object.assign(ids, { superAdminId, adminId, employeeId });
+
+  // Hierarchy fixture: topLeaderId -> {midLeaderAId, midLeaderBId} -> {reportAId, reportBId}, mirroring
+  // the real Anudeep -> {Rajeshwari, Renuka} -> {Shreenidhi, Jeyant} chain this feature was built for.
+  const topLeaderId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, manager_id) VALUES (?, ?, ?, ?, 'leader', ?)`)
+    .run(topLeaderId, 'Top Leader', 'topleader@test.local', bcrypt.hashSync('TopLead123', 10), superAdminId);
+  const midLeaderAId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, manager_id) VALUES (?, ?, ?, ?, 'leader', ?)`)
+    .run(midLeaderAId, 'Mid Leader A', 'midleadera@test.local', bcrypt.hashSync('MidLeadA123', 10), topLeaderId);
+  const midLeaderBId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, manager_id) VALUES (?, ?, ?, ?, 'leader', ?)`)
+    .run(midLeaderBId, 'Mid Leader B', 'midleaderb@test.local', bcrypt.hashSync('MidLeadB123', 10), topLeaderId);
+  const reportAId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, manager_id) VALUES (?, ?, ?, ?, 'employee', ?)`)
+    .run(reportAId, 'Report A', 'reporta@test.local', bcrypt.hashSync('ReportA123', 10), midLeaderAId);
+  const reportBId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, manager_id) VALUES (?, ?, ?, ?, 'employee', ?)`)
+    .run(reportBId, 'Report B', 'reportb@test.local', bcrypt.hashSync('ReportB123', 10), midLeaderBId);
+  Object.assign(ids, { topLeaderId, midLeaderAId, midLeaderBId, reportAId, reportBId });
+
+  const todayStr = today();
+  const midLeaderATaskId = uuid();
+  await db.prepare(`INSERT INTO commitments (id, employee_id, scrum_date, description, type, priority, due_date, original_due_date, start_date, created_by, updated_by)
+    VALUES (?, ?, ?, 'Mid Leader A task', 'adhoc', 'Medium', ?, ?, ?, ?, ?)`)
+    .run(midLeaderATaskId, midLeaderAId, todayStr, todayStr, todayStr, todayStr, midLeaderAId, midLeaderAId);
+  Object.assign(ids, { midLeaderATaskId });
+
+  const reportATaskId = uuid();
+  await db.prepare(`INSERT INTO commitments (id, employee_id, scrum_date, description, type, priority, due_date, original_due_date, start_date, created_by, updated_by)
+    VALUES (?, ?, ?, 'Report A task', 'adhoc', 'Medium', ?, ?, ?, ?, ?)`)
+    .run(reportATaskId, reportAId, todayStr, todayStr, todayStr, todayStr, reportAId, reportAId);
+  const reportBTaskId = uuid();
+  await db.prepare(`INSERT INTO commitments (id, employee_id, scrum_date, description, type, priority, due_date, original_due_date, start_date, created_by, updated_by)
+    VALUES (?, ?, ?, 'Report B task', 'adhoc', 'Medium', ?, ?, ?, ?, ?)`)
+    .run(reportBTaskId, reportBId, todayStr, todayStr, todayStr, todayStr, reportBId, reportBId);
+  Object.assign(ids, { reportATaskId, reportBTaskId });
 
   server = createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -377,4 +413,90 @@ test('main tasks — a recurring task tagged with a Category and Main Task carri
 
   const blockedDelete = await fetch(`${baseUrl}/api/main-tasks/${mainTask.id}`, { method: 'DELETE', headers: authed(saLogin.token) });
   assert.equal(blockedDelete.status, 409, 'a Main Task already used by a task or template must be blocked from deletion, like Category and Task Type');
+});
+
+test('hierarchy — a Leader can view and act on a direct report\'s task', async () => {
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const view = await fetch(`${baseUrl}/api/scrum/today?employee_id=${ids.reportAId}`, { headers: authed(midLeaderALogin.token) });
+  assert.equal(view.status, 200);
+  const act = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportATaskId}/resolve`, {
+    method: 'POST', headers: authed(midLeaderALogin.token), body: JSON.stringify({ status: 'in_progress' }),
+  });
+  assert.equal(act.status, 200);
+});
+
+test('hierarchy — a Leader cannot view or act on an unrelated employee\'s task', async () => {
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const view = await fetch(`${baseUrl}/api/scrum/today?employee_id=${ids.reportBId}`, { headers: authed(midLeaderALogin.token) });
+  assert.equal(view.status, 403, 'Mid Leader A must not be able to view Report B, who reports to Mid Leader B instead');
+  const act = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportBTaskId}/resolve`, {
+    method: 'POST', headers: authed(midLeaderALogin.token), body: JSON.stringify({ status: 'in_progress' }),
+  });
+  assert.equal(act.status, 403);
+});
+
+test('hierarchy — a Leader two levels up can view and act on a subordinate-of-a-subordinate\'s task', async () => {
+  const { body: topLeaderLogin } = await login('topleader@test.local', 'TopLead123');
+  const viewMid = await fetch(`${baseUrl}/api/scrum/today?employee_id=${ids.midLeaderAId}`, { headers: authed(topLeaderLogin.token) });
+  assert.equal(viewMid.status, 200, 'one level down (a Leader reporting to the Top Leader)');
+  const viewReport = await fetch(`${baseUrl}/api/scrum/today?employee_id=${ids.reportAId}`, { headers: authed(topLeaderLogin.token) });
+  assert.equal(viewReport.status, 200, 'two levels down (an Employee reporting to a Leader who reports to the Top Leader)');
+  const act = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportATaskId}/resolve`, {
+    method: 'POST', headers: authed(topLeaderLogin.token), body: JSON.stringify({ status: 'in_progress' }),
+  });
+  assert.equal(act.status, 200);
+});
+
+test('hierarchy — a plain Employee cannot see a coworker\'s task via History', async () => {
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const res = await fetch(`${baseUrl}/api/history/commitments?employee_id=${ids.reportBId}`, { headers: authed(reportALogin.token) });
+  const { commitments } = await res.json();
+  assert.deepEqual(commitments, [], 'an out-of-scope employee_id filter must collapse to an empty result, not fall back to showing everyone');
+});
+
+test('hierarchy — a plain Employee\'s Team Tasks view only shows their own task', async () => {
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const res = await fetch(`${baseUrl}/api/leader/org-tasks`, { headers: authed(reportALogin.token) });
+  const { tasks } = await res.json();
+  const taskIds = tasks.map((t) => t.id);
+  assert.ok(taskIds.includes(ids.reportATaskId), 'must include their own task');
+  assert.ok(!taskIds.includes(ids.reportBTaskId), 'must not include a coworker\'s task');
+});
+
+test('hierarchy — GET /api/users is scoped to self+reports for a Leader, stays org-wide for Admin', async () => {
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const leaderRes = await fetch(`${baseUrl}/api/users`, { headers: authed(midLeaderALogin.token) });
+  const { users: leaderUsers } = await leaderRes.json();
+  const leaderIds = leaderUsers.map((u) => u.id).sort();
+  assert.deepEqual(leaderIds, [ids.midLeaderAId, ids.reportAId].sort(), 'Mid Leader A must see only themself and Report A');
+
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const adminRes = await fetch(`${baseUrl}/api/users`, { headers: authed(adminLogin.token) });
+  const { users: adminUsers } = await adminRes.json();
+  assert.ok(adminUsers.length >= 8, 'an Admin must still see every user, org-wide, unchanged');
+});
+
+test('hierarchy — Requests inbox is scoped: a Leader can only approve requests about their own reports', async () => {
+  const { body: reportBLogin } = await login('reportb@test.local', 'ReportB123');
+  const requestRes = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportBTaskId}/request-due-date-change`, {
+    method: 'POST', headers: authed(reportBLogin.token), body: JSON.stringify({ requested_due_date: '2099-01-01' }),
+  });
+  assert.equal(requestRes.status, 201);
+  const { request } = await requestRes.json();
+
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const wrongLeaderApprove = await fetch(`${baseUrl}/api/requests/${request.id}/approve`, { method: 'POST', headers: authed(midLeaderALogin.token) });
+  assert.equal(wrongLeaderApprove.status, 403, 'Mid Leader A must not be able to approve a request belonging to Report B (Mid Leader B\'s report)');
+
+  const { body: midLeaderBLogin } = await login('midleaderb@test.local', 'MidLeadB123');
+  const rightLeaderApprove = await fetch(`${baseUrl}/api/requests/${request.id}/approve`, { method: 'POST', headers: authed(midLeaderBLogin.token) });
+  assert.equal(rightLeaderApprove.status, 200);
+});
+
+test('hierarchy — Dashboard: a Leader cannot view an unrelated employee\'s dashboard, but can view a subordinate\'s', async () => {
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const blocked = await fetch(`${baseUrl}/api/dashboard/employee?employee_id=${ids.reportBId}`, { headers: authed(midLeaderALogin.token) });
+  assert.equal(blocked.status, 403);
+  const allowed = await fetch(`${baseUrl}/api/dashboard/employee?employee_id=${ids.reportAId}`, { headers: authed(midLeaderALogin.token) });
+  assert.equal(allowed.status, 200);
 });

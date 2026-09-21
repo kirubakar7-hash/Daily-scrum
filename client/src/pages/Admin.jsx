@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Users, UsersRound, Tag, Tags, Repeat, Plus, Check, UserPlus, ListTree } from 'lucide-react';
 import { api } from '../lib/api';
 import { Badge, Button, Card, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
@@ -393,11 +393,12 @@ function UsersTab() {
   const currentUserId = currentUser.id;
   const [items, setItems] = useState([]);
   const [teams, setTeams] = useState([]);
-  const [form, setForm] = useState({ full_name: '', email: '', password: '', role: 'employee', team_id: '', job_title: '' });
+  const [form, setForm] = useState({ full_name: '', email: '', password: '', role: 'employee', team_id: '', manager_id: '', job_title: '' });
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
+  const managers = useMemo(() => items.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role)), [items]);
 
   function load() {
     setLoadError('');
@@ -411,7 +412,7 @@ function UsersTab() {
     if (!form.full_name || !form.email || !form.password) return setError('Name, email, and password are required.');
     try {
       await api.post('/users', form);
-      setForm({ full_name: '', email: '', password: '', role: 'employee', team_id: '', job_title: '' });
+      setForm({ full_name: '', email: '', password: '', role: 'employee', team_id: '', manager_id: '', job_title: '' });
       setFormOpen(false);
       load();
     } catch (e) { setError(e.message); }
@@ -458,6 +459,10 @@ function UsersTab() {
             <option value="">No team</option>
             {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </Select>
+          <Select label="Reports To" value={form.manager_id} onChange={(e) => setForm((f) => ({ ...f, manager_id: e.target.value }))}>
+            <option value="">No manager</option>
+            {managers.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+          </Select>
         </div>
         <ErrorBanner message={error} />
         <Button className="mt-3" onClick={create}><Plus className="w-4 h-4" /> Create User</Button>
@@ -470,7 +475,7 @@ function UsersTab() {
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5 pr-2">Name</th><th className="pr-2">Job Title</th><th className="pr-2">Email</th><th className="pr-2">Role</th><th className="pr-2">Team</th><th className="pr-2">Status</th><th colSpan={2}></th></tr></thead>
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5 pr-2">Name</th><th className="pr-2">Job Title</th><th className="pr-2">Email</th><th className="pr-2">Role</th><th className="pr-2">Team</th><th className="pr-2">Reports To</th><th className="pr-2">Status</th><th colSpan={2}></th></tr></thead>
             <tbody>
               {items.map((u, i) => (
                 <tr key={u.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
@@ -511,6 +516,16 @@ function UsersTab() {
                     >
                       <option value="">—</option>
                       {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </td>
+                  <td className="pr-2">
+                    <select
+                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
+                      value={u.manager_id || ''}
+                      onChange={(e) => updateUser(u, { manager_id: e.target.value || null })}
+                    >
+                      <option value="">—</option>
+                      {managers.filter((m) => m.id !== u.id).map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
                     </select>
                   </td>
                   <td className="pr-2"><Badge tone={u.is_active ? 'completed' : 'support_required'}>{u.is_active ? 'Active' : 'Inactive'}</Badge></td>

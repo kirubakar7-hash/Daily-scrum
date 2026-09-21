@@ -150,3 +150,39 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Deliberately not done yet:** importing the real 68-row finance dataset (blocked on an unresolved assignee decision, since every task requires a real `employee_id`), and the source spreadsheet's "Code" column (APA/GL/etc.) — revisit only if asked.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-18
+**Change:** Renamed the "Category" label to "Subtask" everywhere it appears in the UI — Admin tab name, form labels, table/filter headers, CSV export columns, downloaded CSV template filenames, and error messages, on both Team Tasks and History.
+**Reason:** Explicit request. Purely a display-text rename — the underlying `categories` table, `category_id` fields, and `/api/categories` routes are all unchanged, so no data was touched.
+**Files:** `client/src/pages/Admin.jsx`, `client/src/pages/History.jsx`, `client/src/pages/AuditLog.jsx` (also filled in a missing "Main Task" Audit Log label noticed while in this file), `client/src/components/TeamTaskList.jsx`, `server/src/routes/categories.js`, `server/src/routes/recurringTasks.js`, `server/src/routes/mainTasks.js`, `server/src/routes/scrum.js`, `server/src/routes/history.js`.
+**Database:** No schema change.
+**Tests:** No new tests needed — no behavior changed, only display text. `node --check` passed on every touched backend file; `npm run build` passed clean on the client.
+**Verified live:** confirmed on the real production app — the Admin tab now reads "Subtasks", and Team Tasks/History's filters, columns, and CSV exports/templates all say "Subtask" instead of "Category".
+**Deployment:** Live.
+**Cost:** None.
+
+---
+
+**Date:** 2026-09-18
+**Change:** Added a show/hide (eye icon) toggle to every password field in the app — Login, Change Password, and Admin's Create User and Reset Password forms.
+**Reason:** Explicit request, after a related question about listing user passwords (not possible — passwords are bcrypt-hashed, one-way, never recoverable by anyone including a Super Admin; this toggle instead lets whoever is *typing* a password confirm what they typed before saving it).
+**Files:** `client/src/components/ui.jsx` — the shared `Input` component gained the toggle; every password field in the app uses this one component, so no other file needed changes.
+**Database:** No schema change.
+**Tests:** Verified locally (typed a password, confirmed it stays masked, clicked the eye icon, confirmed it reveals as plain text and the icon/label swap correctly) via the local dev server, then re-verified the same flow live on the real Login page after deploying.
+**Deployment:** Live.
+**Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Added a real manager-reporting hierarchy for Leader and Employee roles — a Leader now sees and can act on only themself plus everyone reporting to them (any depth), and an Employee sees and can act on only themself. This replaces the app's previous flat rule ("everyone sees everyone, any Leader can edit anyone, org-wide") for those two roles specifically. Super Admin, Admin, and Senior Management are unaffected — they keep seeing everyone, exactly as before.
+**Reason:** Explicit request, given as a target table mapping each real person's role, manager, and view/edit scope. Confirmed twice: that the other three roles should stay wide-open, and that visibility should never go upward (a Leader never sees their own manager's data through this rule).
+**Files:** `server/migrations/001_schema.sql` (new nullable `manager_id TEXT REFERENCES users(id)` column + index on `users`), `server/src/lib/scope.js` (the central rewrite — a new recursive `subordinateIds()` walks `manager_id` via a `WITH RECURSIVE` CTE; `visibleEmployeeIds`/`canActOnEmployee` now branch by role instead of being universal), `server/src/routes/scrum.js` (11 call sites of the edit-permission check needed `await` added once it became async), `server/src/routes/leader.js` (the Daily Scrum/Team-roster scoping and the org-wide Team Tasks page both now respect the hierarchy for Leader/Employee), `server/src/routes/dashboard.js` (the Leader dashboard's KPIs, and the "view someone else's dashboard" guard), `server/src/routes/users.js` (the `/api/users` list — used by My Tasks' assignee picker — is now scoped for a Leader; new "Reports To" field on create/edit, validated the same way Teams already validates a team leader), `server/src/routes/requests.js` (the Requests inbox had *no* scoping at all before this — a Leader now only sees and can approve/reject requests belonging to their own reporting chain), `client/src/pages/Admin.jsx` (new "Reports To" column/selects on the Users tab), `client/src/pages/AllTasks.jsx` (role-aware description text).
+**Database:** New `manager_id` column + index on `users`. Applied to live Neon the same way as prior migrations this session — local Postgres connectivity on this network has repeatedly timed out on port 5432, so the live `ALTER TABLE`/`CREATE INDEX` went through Neon's web SQL Editor, verified via `information_schema.columns`.
+**Bug found and fixed while implementing:** `leader.js`'s `GET /org-tasks` computed a `can_act` flag by calling the (now-async) permission check inside a plain `.map()` — since `.map()` doesn't await, every row would have silently gotten `can_act: 1` regardless of real permission, once the function became async. Fixed by precomputing the actionable set once per request instead of per row, before this ever reached production.
+**Tests:** 8 new tests in `server/test/api.integration.test.js` (a seeded 3-level hierarchy fixture; direct-report access, unrelated-employee denial both ways, two-levels-deep access, History/Team-Tasks/`/api/users`/Requests/Dashboard scoping, plus a regression check that Admin stays org-wide) and 3 existing tests in `server/test/scope.test.js` updated for the function's new async signature. Full suite: 57/57 passing (was 48/48 before this feature).
+**Deliberately not done in this change:** the real live `manager_id` values for the 5 actual non-Super-Admin users, and setting AP Team/AR team's actual leaders (both teams currently show "No leader") — done live via Admin right after this deploys, not as a silent data migration.
+**Deployment:** Live.
+**Cost:** None.

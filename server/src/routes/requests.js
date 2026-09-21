@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { recordAudit } from '../lib/audit.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { visibleEmployeeIds, canActOnEmployee } from '../lib/scope.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -12,12 +13,21 @@ async function employeeName(id) {
 }
 
 /** GET /api/requests — the Requests inbox. Defaults to pending only; ?status= to see others. Read-only
- *  for senior_management too, matching the universal-visibility rule the rest of the app follows —
- *  approve/reject below stay leader-tier only. LEFT JOINs so a request whose commitment was somehow
- *  removed (legacy data from before deletes started auto-resolving pending requests) still shows up
- *  instead of silently vanishing from every listing. */
+ *  for senior_management too. Super Admin/Admin/Senior Management stay org-wide; a Leader only sees
+ *  requests belonging to their own reporting chain (scope.js). LEFT JOINs so a request whose commitment
+ *  was somehow removed (legacy data from before deletes started auto-resolving pending requests) still
+ *  shows up instead of silently vanishing from every listing — those orphaned rows have no owner to scope
+ *  against, so they're only visible to the wide-open roles. */
 router.get('/', requireRole('leader', 'admin', 'super_admin', 'senior_management'), asyncHandler(async (req, res) => {
   const status = req.query.status || 'pending';
+  const wideOpen = ['super_admin', 'admin', 'senior_management'].includes(req.user.role);
+  const params = [status];
+  let scopeClause = '';
+  if (!wideOpen) {
+    const ids = await visibleEmployeeIds(req.user);
+    scopeClause = ` AND e.id IN (${ids.length ? ids.map(() => '?').join(',') : "'__none__'"})`;
+    params.push(...ids);
+  }
   const rows = await db.prepare(`
     SELECT r.*, c.description, c.due_date, c.status AS commitment_status,
       u.full_name AS requested_by_name, e.id AS employee_id, e.full_name AS employee_name
@@ -25,9 +35,9 @@ router.get('/', requireRole('leader', 'admin', 'super_admin', 'senior_management
     LEFT JOIN commitments c ON c.id = r.commitment_id
     JOIN users u ON u.id = r.requested_by
     LEFT JOIN users e ON e.id = c.employee_id
-    WHERE r.status = ?
+    WHERE r.status = ?${scopeClause}
     ORDER BY r.created_at DESC
-  `).all(status);
+  `).all(...params);
   res.json({ requests: rows });
 }));
 
@@ -42,6 +52,9 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
 
   const commitment = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(request.commitment_id);
   if (!commitment) return res.status(404).json({ error: 'The task this request belongs to no longer exists.' });
+  if (req.user.role === 'leader' && !(await canActOnEmployee(req.user, commitment.employee_id))) {
+    return res.status(403).json({ error: 'You can only act on requests for people who report to you.' });
+  }
   const leaderNote = req.body?.leader_note || null;
   const ownerId = commitment.employee_id;
   const ownerName = await employeeName(ownerId);
@@ -87,6 +100,14 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
   if (request.status !== 'pending') return res.status(400).json({ error: 'This request has already been resolved.' });
 
   const commitment = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(request.commitment_id);
+  if (req.user.role === 'leader') {
+    // No commitment (orphaned legacy request) means no owner to check a Leader's scope against — only
+    // Admin/Super Admin can resolve those.
+    if (!commitment) return res.status(403).json({ error: 'You can only act on requests for people who report to you.' });
+    if (!(await canActOnEmployee(req.user, commitment.employee_id))) {
+      return res.status(403).json({ error: 'You can only act on requests for people who report to you.' });
+    }
+  }
   const leaderNote = req.body?.leader_note || null;
 
   if (commitment && request.type === 'support') {

@@ -74,6 +74,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('super_admin','admin','leader','employee','senior_management')),
   team_id TEXT REFERENCES teams(id),
+  -- Who this person reports to, for the view/edit hierarchy in lib/scope.js — separate from team_id
+  -- (which is just a dashboard grouping) since a manager chain and a team grouping don't always coincide.
+  manager_id TEXT REFERENCES users(id),
   job_title TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   is_super_admin_protected INTEGER NOT NULL DEFAULT 0,
@@ -247,6 +250,7 @@ CREATE INDEX IF NOT EXISTS idx_commitments_category ON commitments(category_id);
 CREATE INDEX IF NOT EXISTS idx_commitments_task_type ON commitments(task_type_id);
 CREATE INDEX IF NOT EXISTS idx_commitments_recurring_activity ON commitments(recurring_activity_id);
 CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);
+CREATE INDEX IF NOT EXISTS idx_users_manager ON users(manager_id);
 CREATE INDEX IF NOT EXISTS idx_requests_requested_by ON requests(requested_by);
 CREATE INDEX IF NOT EXISTS idx_requests_resolved_by ON requests(resolved_by);
 CREATE INDEX IF NOT EXISTS idx_audit_changed_at ON audit_logs(changed_at);

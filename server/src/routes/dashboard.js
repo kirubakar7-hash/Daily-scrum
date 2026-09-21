@@ -6,6 +6,7 @@ import { recordAudit } from '../lib/audit.js';
 import { buildStatusEmail } from '../lib/statusEmail.js';
 import { sendMail, mailIsConfigured, stakeholderRecipients } from '../lib/mail.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { subordinateIds } from '../lib/scope.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -14,14 +15,19 @@ function inClause(ids) {
   return ids.length ? ids.map(() => '?').join(',') : "'__none__'";
 }
 
-/** GET /api/dashboard/employee — "What do I need to do today?" An employee may only ever see their own
- *  dashboard — the requested employee_id is honored only for leader-tier/senior_management roles, whose
- *  authorized scope is already org-wide everywhere else in the app (scope.js). Anyone else asking for
- *  someone else's id is refused outright, rather than silently falling back to their own. */
+/** GET /api/dashboard/employee — "What do I need to do today?" An Employee may only ever see their own
+ *  dashboard. A Leader may see their own reporting chain, any depth (scope.js). Admin/Super Admin/Senior
+ *  Management stay org-wide, matching their scope everywhere else. Anyone asking for someone outside
+ *  their scope is refused outright, rather than silently falling back to their own. */
 router.get('/employee', asyncHandler(async (req, res) => {
   const requestedId = req.query.employee_id;
-  if (requestedId && requestedId !== req.user.id && req.user.role === 'employee') {
-    return res.status(403).json({ error: 'You can only view your own dashboard.' });
+  if (requestedId && requestedId !== req.user.id) {
+    if (req.user.role === 'employee') {
+      return res.status(403).json({ error: 'You can only view your own dashboard.' });
+    }
+    if (req.user.role === 'leader' && !(await subordinateIds(req.user.id)).includes(requestedId)) {
+      return res.status(403).json({ error: "You can only view your own dashboard or someone reporting to you." });
+    }
   }
   const employeeId = requestedId || req.user.id;
   const date = today();
@@ -59,12 +65,15 @@ router.get('/employee', asyncHandler(async (req, res) => {
 
 /** GET /api/dashboard/leader — "What needs my attention today?" */
 router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_management'), asyncHandler(async (req, res) => {
-  // role='employee' here on purpose — a Leader whose own team_id happens to point at the team they
-  // lead (a natural setup via Admin) must not count themselves as one of their own "team members",
-  // matching scopedEmployees() in leader.js so the Team Overview table and this KPI never disagree.
-  const teamIds = req.user.role === 'leader'
-    ? (await db.prepare(`SELECT id FROM users WHERE team_id IN (SELECT id FROM teams WHERE leader_user_id = ?) AND role='employee' AND is_active=1`).all(req.user.id)).map((r) => r.id)
-    : (await db.prepare(`SELECT id FROM users WHERE role='employee' AND is_active=1`).all()).map((r) => r.id);
+  // subordinateIds() already excludes the caller — reused directly so this KPI and scopedEmployees() in
+  // leader.js can never disagree, unlike before when each hand-rolled its own copy of the same query.
+  let teamIds;
+  if (req.user.role === 'leader') {
+    const activeIds = new Set((await db.prepare('SELECT id FROM users WHERE is_active=1').all()).map((r) => r.id));
+    teamIds = (await subordinateIds(req.user.id)).filter((id) => activeIds.has(id));
+  } else {
+    teamIds = (await db.prepare(`SELECT id FROM users WHERE role='employee' AND is_active=1`).all()).map((r) => r.id);
+  }
 
   const empIds = teamIds.length ? teamIds : ['__none__'];
   const clause = inClause(empIds);

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db, today } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { withDelay } from '../lib/delay.js';
-import { canActOnEmployee, isReadOnly } from '../lib/scope.js';
+import { visibleEmployeeIds, subordinateIds, isReadOnly } from '../lib/scope.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 
 const router = Router();
@@ -10,10 +10,11 @@ router.use(requireAuth);
 
 async function scopedEmployees(user) {
   if (user.role === 'leader') {
-    const teamIds = (await db.prepare('SELECT id FROM teams WHERE leader_user_id = ?').all(user.id)).map((r) => r.id);
-    if (teamIds.length === 0) return [];
-    const placeholders = teamIds.map(() => '?').join(',');
-    return await db.prepare(`SELECT * FROM users WHERE team_id IN (${placeholders}) AND is_active = 1 AND role = 'employee' ORDER BY full_name`).all(...teamIds);
+    // Not filtered to role='employee' — a Leader's reporting chain can include other Leaders below them.
+    const ids = await subordinateIds(user.id);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    return await db.prepare(`SELECT * FROM users WHERE id IN (${placeholders}) AND is_active = 1 ORDER BY full_name`).all(...ids);
   }
   return await db.prepare(`SELECT * FROM users WHERE role = 'employee' AND is_active = 1 ORDER BY full_name`).all();
 }
@@ -89,14 +90,29 @@ router.get('/team-tasks', requireRole('super_admin', 'admin', 'leader', 'senior_
   res.json({ date, tasks: await openTasksForEmployees(employees.map((e) => e.id), date) });
 }));
 
-/** GET /api/leader/org-tasks — every active user's open tasks, org-wide, for the universal "Team Tasks"
- *  page every role can see. `can_act` tells the frontend which rows this specific viewer may edit —
- *  their own tasks, or (for a Leader-tier viewer) anyone's. */
+/** GET /api/leader/org-tasks — every task on the "Team Tasks" page. Wide-open roles (Super Admin, Admin,
+ *  Senior Management) see every active user's tasks, org-wide, same as always. A Leader or Employee sees
+ *  only their own reporting chain here too, same as everywhere else in the app. `can_act` tells the
+ *  frontend which rows this specific viewer may edit. */
 router.get('/org-tasks', asyncHandler(async (req, res) => {
   const date = req.query.date || today();
-  const ids = (await allActiveUsers()).map((e) => e.id);
+  const wideOpen = ['super_admin', 'admin', 'senior_management'].includes(req.user.role);
+
+  let ids;
+  if (wideOpen) {
+    ids = (await allActiveUsers()).map((e) => e.id);
+  } else {
+    // visibleEmployeeIds() deliberately doesn't filter is_active (History/Search still need a deactivated
+    // person's past data) — this working view does, so intersect against the active-user id set.
+    const activeIds = new Set((await allActiveUsers()).map((e) => e.id));
+    ids = (await visibleEmployeeIds(req.user)).filter((id) => activeIds.has(id));
+  }
+
+  // Precomputed once, not per row — canActOnEmployee's leader branch would otherwise re-run the same
+  // recursive query for every task on the page.
+  const actionable = wideOpen ? null : new Set(await visibleEmployeeIds(req.user));
   const tasks = (await openTasksForEmployees(ids, date)).map((r) => ({
-    ...r, can_act: !isReadOnly(req.user) && canActOnEmployee(req.user, r.employee_id) ? 1 : 0,
+    ...r, can_act: !isReadOnly(req.user) && (wideOpen || actionable.has(r.employee_id)) ? 1 : 0,
   }));
   res.json({ date, tasks });
 }));

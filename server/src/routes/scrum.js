@@ -37,12 +37,12 @@ async function assertEmployeeExists(res, employeeId) {
   return true;
 }
 
-function assertCanEdit(req, res, employeeId) {
+async function assertCanEdit(req, res, employeeId) {
   if (isReadOnly(req.user)) {
     res.status(403).json({ error: 'Your role has read-only access.' });
     return false;
   }
-  if (!canActOnEmployee(req.user, employeeId)) {
+  if (!(await canActOnEmployee(req.user, employeeId))) {
     res.status(403).json({ error: "You don't have permission to edit this employee's data." });
     return false;
   }
@@ -114,7 +114,7 @@ router.get('/my-tasks', asyncHandler(async (req, res) => {
 /** POST /api/scrum/commitments — "What will you complete today?" */
 router.post('/commitments', asyncHandler(async (req, res) => {
   const employeeId = targetEmployeeId(req);
-  if (!assertCanEdit(req, res, employeeId)) return;
+  if (!(await assertCanEdit(req, res, employeeId))) return;
   if (!(await assertEmployeeExists(res, employeeId))) return;
   const b = req.body || {};
   if (!b.description || !b.description.trim()) return res.status(400).json({ error: 'Please describe the activity.' });
@@ -199,7 +199,7 @@ router.post('/commitments', asyncHandler(async (req, res) => {
 router.post('/commitments/:id/carry-forward', asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'Task not found.' });
-  if (!assertCanEdit(req, res, before.employee_id)) return;
+  if (!(await assertCanEdit(req, res, before.employee_id))) return;
 
   const newDueDate = req.body?.new_due_date;
   if (!newDueDate) return res.status(400).json({ error: 'Please choose when you expect to complete this.' });
@@ -226,7 +226,7 @@ router.post('/commitments/:id/carry-forward', asyncHandler(async (req, res) => {
 router.post('/commitments/:id/request-due-date-change', asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'Task not found.' });
-  if (!assertCanEdit(req, res, before.employee_id)) return;
+  if (!(await assertCanEdit(req, res, before.employee_id))) return;
 
   const requestedDate = req.body?.requested_due_date;
   if (!requestedDate) return res.status(400).json({ error: "Please choose the date you're requesting." });
@@ -251,7 +251,7 @@ router.post('/commitments/:id/request-due-date-change', asyncHandler(async (req,
 router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'Commitment not found.' });
-  if (!assertCanEdit(req, res, before.employee_id)) return;
+  if (!(await assertCanEdit(req, res, before.employee_id))) return;
 
   const b = req.body || {};
   if (!['pending', 'in_progress', 'completed', 'support_required'].includes(b.status)) {
@@ -360,7 +360,7 @@ router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
 router.patch('/commitments/:id', asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'Commitment not found.' });
-  if (!assertCanEdit(req, res, before.employee_id)) return;
+  if (!(await assertCanEdit(req, res, before.employee_id))) return;
   const fields = ['description', 'priority', 'expected_outcome', 'due_date', 'due_time', 'estimated_effort', 'dependency', 'dependency_owner', 'remarks'];
   const after = { ...before };
   for (const f of fields) if (req.body?.[f] !== undefined) after[f] = req.body[f];
@@ -391,7 +391,7 @@ router.delete('/commitments/:id', asyncHandler(async (req, res) => {
   }
   const commitment = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(req.params.id);
   if (!commitment) return res.status(404).json({ error: 'Task not found.' });
-  if (!assertCanEdit(req, res, commitment.employee_id)) return;
+  if (!(await assertCanEdit(req, res, commitment.employee_id))) return;
   if (req.user.role !== 'super_admin' && commitment.created_by !== req.user.id) {
     return res.status(403).json({ error: "You can only delete a task you created yourself — not something someone logged for their own day." });
   }
@@ -418,7 +418,7 @@ router.delete('/commitments/:id', asyncHandler(async (req, res) => {
 /** POST /api/scrum/actions */
 router.post('/actions', asyncHandler(async (req, res) => {
   const employeeId = targetEmployeeId(req);
-  if (!assertCanEdit(req, res, employeeId)) return;
+  if (!(await assertCanEdit(req, res, employeeId))) return;
   if (!(await assertEmployeeExists(res, employeeId))) return;
   const b = req.body || {};
   if (!b.description || !b.description.trim()) return res.status(400).json({ error: 'Please describe the action needed.' });
@@ -436,7 +436,7 @@ router.post('/actions', asyncHandler(async (req, res) => {
 router.patch('/actions/:id', asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM actions WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'Action not found.' });
-  if (!assertCanEdit(req, res, before.employee_id)) return;
+  if (!(await assertCanEdit(req, res, before.employee_id))) return;
   const status = req.body?.status || before.status;
   const completionDate = status === 'completed' ? new Date().toISOString() : before.completion_date;
   await db.prepare(`UPDATE actions SET status=?, completion_date=?, remarks=?, updated_at=datetime('now'), updated_by=? WHERE id=?`)
@@ -448,7 +448,7 @@ router.patch('/actions/:id', asyncHandler(async (req, res) => {
 /** POST /api/scrum/escalations */
 router.post('/escalations', asyncHandler(async (req, res) => {
   const employeeId = targetEmployeeId(req);
-  if (!assertCanEdit(req, res, employeeId)) return;
+  if (!(await assertCanEdit(req, res, employeeId))) return;
   if (!(await assertEmployeeExists(res, employeeId))) return;
   const b = req.body || {};
   if (!b.issue || !b.issue.trim()) return res.status(400).json({ error: 'Please describe the issue being escalated.' });
@@ -466,7 +466,7 @@ router.post('/escalations', asyncHandler(async (req, res) => {
 router.patch('/escalations/:id', asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM escalations WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'Escalation not found.' });
-  if (!assertCanEdit(req, res, before.employee_id)) return;
+  if (!(await assertCanEdit(req, res, before.employee_id))) return;
   const status = req.body?.status || before.status;
   const resolutionDate = status === 'resolved' ? new Date().toISOString() : before.resolution_date;
   await db.prepare(`UPDATE escalations SET status=?, resolution_date=?, resolution_remarks=?, updated_at=datetime('now'), updated_by=? WHERE id=?`)
@@ -478,7 +478,7 @@ router.patch('/escalations/:id', asyncHandler(async (req, res) => {
 /** POST /api/scrum/confirm — Step 5, confirm today's commitments */
 router.post('/confirm', asyncHandler(async (req, res) => {
   const employeeId = targetEmployeeId(req);
-  if (!assertCanEdit(req, res, employeeId)) return;
+  if (!(await assertCanEdit(req, res, employeeId))) return;
   const date = req.body?.date || today();
   const existing = await db.prepare('SELECT * FROM scrum_sessions WHERE employee_id = ? AND scrum_date = ?').get(employeeId, date);
   if (existing) {
