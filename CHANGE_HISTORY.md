@@ -222,3 +222,14 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** No new tests needed — pure UI restyle, no behavior changed. `npm run build` passed clean.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Fixed Team Today and Team Tasks silently dropping other Leaders/Admins from the roster for wide-open-role viewers (Admin, Super Admin, Senior Management).
+**Reason:** P0 finding from the full application audit (`server/src/lib/scope.js`'s `WIDE_OPEN_ROLES` are supposed to see literally everyone, org-wide — this was the one screen-level exception).
+**Files:** `server/src/routes/leader.js` — `scopedEmployees()`'s fallback branch (for any non-`leader` caller) was querying `role = 'employee'` only; now reuses `allActiveUsers()`, the same helper `GET /org-tasks` already used correctly a few lines below.
+**Database:** No schema change.
+**Tests:** New test `hierarchy — Team Today includes Leaders/Admins in the roster for wide-open roles, not just Employees` in `server/test/api.integration.test.js`. Full suite: 60/60 passing.
+**Deployment:** Live.
+**Cost:** None.
