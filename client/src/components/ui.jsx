@@ -234,6 +234,15 @@ const badgeColors = {
   High: 'bg-accent-50 text-accent-700 ring-1 ring-accent-600/20',
   Medium: 'bg-amber-50 text-amber-700 ring-1 ring-amber-600/20',
   Low: 'bg-grey-100 text-grey-700 ring-1 ring-grey-500/15',
+  // Role badges: an authority ladder within brand blue (Leader lightest, Admin medium, Super Admin solid
+  // fill — deliberately the boldest badge in the app, since there's only one), grey for the self-scoped
+  // Employee baseline, and amber for Senior Management as the one role on a genuinely different track
+  // (read-only oversight, not a rung on the same authority ladder).
+  employee: 'bg-grey-100 text-grey-700 ring-1 ring-grey-500/15',
+  leader: 'bg-brand-50 text-brand-600 ring-1 ring-brand-500/20',
+  admin: 'bg-brand-100 text-brand-700 ring-1 ring-brand-600/25',
+  super_admin: 'bg-brand-700 text-white ring-1 ring-brand-800/40',
+  senior_management: 'bg-amber-50 text-amber-700 ring-1 ring-amber-600/20',
 };
 
 /** Same lookup the read-only Badge uses below, exported so an editable control showing one of these same

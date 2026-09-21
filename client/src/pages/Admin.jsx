@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Users, UsersRound, Tag, Tags, Repeat, Plus, Check, UserPlus, ListTree } from 'lucide-react';
 import { api } from '../lib/api';
-import { Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
+import { badgeClassFor, Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
 import RecurrencePicker, { DEFAULT_RULE } from '../components/RecurrencePicker';
 import ImportButton from '../components/ImportButton';
@@ -641,7 +641,7 @@ function UsersTab() {
                   <td className="pr-2">
                     <select
                       disabled={!!u.is_super_admin_protected}
-                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
+                      className={`text-xs font-semibold rounded-full px-2.5 py-1 border-0 cursor-pointer transition-opacity focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:cursor-not-allowed disabled:opacity-80 ${badgeClassFor(u.role)}`}
                       value={u.role}
                       onChange={(e) => updateUser(u, { role: e.target.value })}
                     >
