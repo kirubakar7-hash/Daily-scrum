@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { History } from 'lucide-react';
 import { api } from '../lib/api';
-import { Button, Card, ErrorBanner } from '../components/ui';
+import { Button, Card, ErrorBanner, Skeleton } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
 import AuditTimeline from '../components/AuditTimeline';
 
 export default function AuditLog() {
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState(null);
   const [loadError, setLoadError] = useState('');
 
   function load() {
@@ -33,7 +33,13 @@ export default function AuditLog() {
       {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
       {!loadError && (
         <div className="mt-4">
-          <AuditTimeline logs={logs} />
+          {logs === null ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
+            </div>
+          ) : (
+            <AuditTimeline logs={logs} />
+          )}
         </div>
       )}
     </Card>

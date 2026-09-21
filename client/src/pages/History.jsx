@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
-import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationSearch, Input, Select, humanize } from '../components/ui';
+import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationSearch, Input, Select, Skeleton, humanize } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
 import {
   History as HistoryIcon,
@@ -12,6 +12,7 @@ import {
   ClipboardList,
   ListChecks,
   Search,
+  Check,
 } from 'lucide-react';
 
 const EMPTY_FILTERS = { date_from: '', date_to: '', type: '', status: '', category_id: '', main_task_id: '', employee_id: '', team_id: '', priority: '' };
@@ -36,8 +37,8 @@ export default function History() {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get('tab') === 'search' ? 'Search' : 'Browse');
   const [filters, setFilters] = useState(() => filtersFromSearchParams(searchParams));
-  const [summary, setSummary] = useState([]);
-  const [commitments, setCommitments] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [commitments, setCommitments] = useState(null);
   const [categories, setCategories] = useState([]);
   const [mainTasks, setMainTasks] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -169,11 +170,12 @@ export default function History() {
               </button>
               {exported && (
                 <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 animate-scale-in">
-                  ✓ Downloaded
+                  <Check className="w-3.5 h-3.5" /> Downloaded
                 </span>
               )}
             </div>
             <ErrorBanner message={loadError} />
+            {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={() => query()}>Retry</Button>}
           </Card>
 
           <Card className="animate-fade-in-up" style={{ animationDelay: '80ms' }}>
@@ -185,7 +187,11 @@ export default function History() {
                 Each row is calculated live from stored records for the period you selected above.{' '}
                 <strong>Escalated</strong> counts tasks that were flagged <Badge tone="support_required">Support Required</Badge> and sent to a Leader's Requests inbox for review.
               </HelpBanner>
-              {summary.length === 0 ? (
+              {summary === null ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+                </div>
+              ) : summary.length === 0 ? (
                 <EmptyState icon={<IllustrationEmptyList className="w-16 h-16 mx-auto" />} title="Nothing here yet">No records match this filter.</EmptyState>
               ) : (
                 <div className="overflow-x-auto">
@@ -225,7 +231,11 @@ export default function History() {
               <ClipboardList className="w-4 h-4 text-brand-600" />
               <h2 className="font-semibold text-grey-900">Task Records</h2>
             </div>
-            {commitments.length === 0 ? (
+            {commitments === null ? (
+              <div className="space-y-2">
+                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+              </div>
+            ) : commitments.length === 0 ? (
               <EmptyState icon={<IllustrationEmptyList className="w-16 h-16 mx-auto" />} title="Nothing here yet">No records match this filter — try widening the date range.</EmptyState>
             ) : (
               <div className="overflow-x-auto">
