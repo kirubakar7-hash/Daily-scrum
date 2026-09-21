@@ -475,6 +475,35 @@ function UsersTab() {
   const [formOpen, setFormOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
   const managers = useMemo(() => (items || []).filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role)), [items]);
+  // Depth-first walk of manager_id -> reports, so the table reads top-to-bottom as an org chart instead
+  // of creation order. A dangling/unset manager_id is treated as a root, and a `visited` guard means a
+  // stray cycle in bad data can't loop forever — it just stops re-descending, same defensive spirit as
+  // subordinateIds() on the server.
+  const sortedItems = useMemo(() => {
+    if (!items) return [];
+    const byId = new Map(items.map((u) => [u.id, u]));
+    const childrenByManager = new Map();
+    for (const u of items) {
+      const key = u.manager_id && byId.has(u.manager_id) ? u.manager_id : null;
+      if (!childrenByManager.has(key)) childrenByManager.set(key, []);
+      childrenByManager.get(key).push(u);
+    }
+    for (const list of childrenByManager.values()) list.sort((a, b) => a.full_name.localeCompare(b.full_name));
+
+    const ordered = [];
+    const visited = new Set();
+    function visit(managerId, depth) {
+      for (const u of childrenByManager.get(managerId) || []) {
+        if (visited.has(u.id)) continue;
+        visited.add(u.id);
+        ordered.push({ ...u, depth });
+        visit(u.id, depth + 1);
+      }
+    }
+    visit(null, 0);
+    for (const u of items) if (!visited.has(u.id)) ordered.push({ ...u, depth: 0 });
+    return ordered;
+  }, [items]);
 
   function load() {
     setLoadError('');
@@ -568,11 +597,29 @@ function UsersTab() {
         ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5 pr-2">Name</th><th className="pr-2">Job Title</th><th className="pr-2">Email</th><th className="pr-2">Role</th><th className="pr-2">Team</th><th className="pr-2">Reports To</th><th className="pr-2">Status</th><th colSpan={2}></th></tr></thead>
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5 pr-2">Name</th><th className="pr-2">Job Title</th><th className="pr-2">Email</th><th className="pr-2">Role</th><th className="pr-2">Team</th><th className="pr-2">Status</th><th colSpan={2}></th></tr></thead>
             <tbody>
-              {items.map((u, i) => (
+              {sortedItems.map((u, i) => (
                 <tr key={u.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                  <td className="py-2 pr-2 font-semibold text-grey-800">{u.full_name} {u.is_super_admin_protected ? <Badge tone="pending">Protected</Badge> : null}</td>
+                  <td className="py-2 pr-2 font-semibold text-grey-800">
+                    <div style={{ paddingLeft: `${u.depth * 20}px` }}>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span>{u.full_name}</span>
+                        {u.is_super_admin_protected ? <Badge tone="pending">Protected</Badge> : null}
+                      </div>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="text-[11px] font-normal text-grey-400 whitespace-nowrap">reports to</span>
+                        <select
+                          className="text-[11px] font-normal text-grey-500 border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-brand-500/40 rounded px-0.5 -ml-0.5 cursor-pointer hover:text-brand-600 transition-colors"
+                          value={u.manager_id || ''}
+                          onChange={(e) => updateUser(u, { manager_id: e.target.value || null })}
+                        >
+                          <option value="">— no one</option>
+                          {managers.filter((m) => m.id !== u.id).map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </td>
                   <td className="pr-2">
                     <input
                       type="text"
@@ -609,16 +656,6 @@ function UsersTab() {
                     >
                       <option value="">—</option>
                       {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                  </td>
-                  <td className="pr-2">
-                    <select
-                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-                      value={u.manager_id || ''}
-                      onChange={(e) => updateUser(u, { manager_id: e.target.value || null })}
-                    >
-                      <option value="">—</option>
-                      {managers.filter((m) => m.id !== u.id).map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
                     </select>
                   </td>
                   <td className="pr-2"><Badge tone={u.is_active ? 'completed' : 'support_required'}>{u.is_active ? 'Active' : 'Inactive'}</Badge></td>
