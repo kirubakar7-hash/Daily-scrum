@@ -186,3 +186,16 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Deliberately not done in this change:** the real live `manager_id` values for the 5 actual non-Super-Admin users, and setting AP Team/AR team's actual leaders (both teams currently show "No leader") — done live via Admin right after this deploys, not as a silent data migration.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Added CSV bulk-import for ad-hoc tasks — an "Import CSV" (+ "Download Template") button next to "Create Task" on My Tasks, Team Tasks, and the Leader's Daily Scrum → Team Tasks tab. Export already existed ("Export to CSV" in the filter bar) — this fills in the missing import half.
+**Reason:** Explicit request, after manually creating 20 sample tasks one-by-one through the UI to populate real test data across the team for the new reporting hierarchy — a bulk-import path is the right tool for that instead of clicking through the Create Task form repeatedly.
+**Files:** `server/src/routes/scrum.js` (new `POST /api/scrum/commitments/import`), `client/src/components/TeamTaskList.jsx` (wired in the existing shared `ImportButton` component, same one used by the other 6 CSV imports in this app).
+**Database:** No schema change.
+**How it stays consistent with the single Create Task form:** each row is looked up by `employee_email` and resolved to an employee, same as every other email-based import in this app (Users' `team_name`, Teams' `leader_email`, Recurring Tasks' `employee_emails`). Critically, it also goes through the same reporting-hierarchy check the single form's `assertCanEdit` enforces — a Leader can only import tasks for people in their own chain; an attempt to assign outside it fails that row with a clear message instead of silently succeeding. A CSV row naming a Recurring-mechanic Task Type is rejected with a pointer to the existing Recurring Tasks import instead, since this endpoint only creates ad-hoc (one-off) tasks — recurring templates already have their own dedicated import.
+**Tests:** New test `import — tasks: a valid row succeeds, an unknown email fails, and a Leader cannot import a task for someone outside their reporting chain` in `server/test/api.integration.test.js`, reusing the hierarchy fixture from the previous change. Full suite: 58/58 passing.
+**Verified live:** created 20 real sample tasks (4 each across Anudeep, Rajeshwari, Renuka, Shreenidhi, and Jeyant) directly through the live app to populate real hierarchy-scoped test data, confirmed they all landed correctly on Team Tasks ("20 of 20 tasks"), and walked one through its full lifecycle (Pending → In Progress → Completed → appears in History as TSK-000027).
+**Deployment:** Live.
+**Cost:** None.

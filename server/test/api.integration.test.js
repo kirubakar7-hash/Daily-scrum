@@ -500,3 +500,26 @@ test('hierarchy — Dashboard: a Leader cannot view an unrelated employee\'s das
   const allowed = await fetch(`${baseUrl}/api/dashboard/employee?employee_id=${ids.reportAId}`, { headers: authed(midLeaderALogin.token) });
   assert.equal(allowed.status, 200);
 });
+
+test('import — tasks: a valid row succeeds, an unknown email fails, and a Leader cannot import a task for someone outside their reporting chain', async () => {
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const res = await fetch(`${baseUrl}/api/scrum/commitments/import`, {
+    method: 'POST', headers: authed(midLeaderALogin.token),
+    body: JSON.stringify({ rows: [
+      { employee_email: 'reporta@test.local', description: 'Imported task for a direct report' },
+      { employee_email: 'nobody-such@test.local', description: 'Should fail — unknown email' },
+      { employee_email: 'reportb@test.local', description: 'Should fail — outside Mid Leader A\'s chain' },
+    ] }),
+  });
+  assert.equal(res.status, 200);
+  const { results } = await res.json();
+  assert.equal(results[0].success, true, 'importing a task for a direct report must succeed');
+  assert.equal(results[1].success, false);
+  assert.match(results[1].error, /no user found/i);
+  assert.equal(results[2].success, false, 'a Leader must not be able to import a task for someone outside their reporting chain');
+  assert.match(results[2].error, /permission/i);
+
+  const created = await db.prepare(`SELECT * FROM commitments WHERE employee_id = ? AND description = ?`).get(ids.reportAId, 'Imported task for a direct report');
+  assert.ok(created, 'the successful row must have actually created a commitment');
+  assert.equal(created.type, 'adhoc');
+});

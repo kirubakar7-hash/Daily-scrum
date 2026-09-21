@@ -5,6 +5,7 @@ import { useAuth } from '../lib/AuthContext';
 import { Badge, Button, DeleteButton, EmptyState, ErrorBanner, humanize, IllustrationEmptyList, IllustrationSearch, Input, Modal, Select, Skeleton, Textarea } from './ui';
 import RecurrencePicker, { DEFAULT_RULE } from './RecurrencePicker';
 import InfoTip from './InfoTip';
+import ImportButton from './ImportButton';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
 const EMPTY_TASK_FILTERS = { employee: '', type: '', priority: '', status: '', category: '', mainTask: '' };
@@ -170,9 +171,18 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
           {' '}Tick the checkboxes to complete or reschedule several tasks at once.
         </p>
         {!readOnly && showCreate && (
-          <Button data-tour="create-task-button" onClick={() => setShowForm(true)} className="shrink-0">
-            <Plus className="w-4 h-4" /> Create Task
-          </Button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <ImportButton
+              entityLabel="Tasks"
+              headers={['employee_email', 'description', 'task_type_name', 'category_name', 'main_task_name', 'priority', 'due_date']}
+              example={{ employee_email: 'jane@company.com', description: 'Follow up with Procurement on the approved PR', task_type_name: '', category_name: '', main_task_name: '', priority: 'Medium', due_date: '' }}
+              endpoint="/scrum/commitments/import"
+              onDone={() => load()}
+            />
+            <Button data-tour="create-task-button" onClick={() => setShowForm(true)}>
+              <Plus className="w-4 h-4" /> Create Task
+            </Button>
+          </div>
         )}
       </div>
 

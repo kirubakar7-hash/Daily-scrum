@@ -194,6 +194,81 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   res.status(201).json({ commitment: await db.prepare('SELECT * FROM commitments WHERE id = ?').get(id) });
 }));
 
+/** POST /api/scrum/commitments/import — bulk-create ad-hoc tasks from the "Import CSV" button on Team
+ *  Tasks. Each row assigns to one person by email; a Leader can only import tasks for people in their own
+ *  reporting chain, same as the single Create Task form enforces via assertCanEdit above. Recurring tasks
+ *  aren't supported here — Admin's Recurring Tasks import already covers that. */
+router.post('/commitments/import', asyncHandler(async (req, res) => {
+  if (isReadOnly(req.user)) return res.status(403).json({ error: 'Your role has read-only access.' });
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const users = await db.prepare('SELECT id, email FROM users').all();
+  const userByEmail = new Map(users.map((u) => [u.email.trim().toLowerCase(), u.id]));
+  const taskTypes = await db.prepare('SELECT id, name, mechanic FROM task_types').all();
+  const taskTypeByName = new Map(taskTypes.map((t) => [t.name.trim().toLowerCase(), t]));
+  const categories = await db.prepare('SELECT id, name FROM categories').all();
+  const categoryByName = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c.id]));
+  const mainTasks = await db.prepare('SELECT id, name FROM main_tasks').all();
+  const mainTaskByName = new Map(mainTasks.map((m) => [m.name.trim().toLowerCase(), m.id]));
+  const results = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    try {
+      const email = (r.employee_email || '').trim();
+      if (!email) throw new Error('employee_email is required.');
+      const employeeId = userByEmail.get(email.toLowerCase());
+      if (!employeeId) throw new Error(`No user found with email "${email}".`);
+      if (!(await canActOnEmployee(req.user, employeeId))) {
+        throw new Error("You don't have permission to assign a task to this person.");
+      }
+
+      const description = (r.description || '').trim();
+      if (!description) throw new Error('description is required.');
+
+      let task_type_id = null;
+      const taskTypeName = (r.task_type_name || '').trim();
+      if (taskTypeName) {
+        const chosenType = taskTypeByName.get(taskTypeName.toLowerCase());
+        if (!chosenType) throw new Error(`Task type "${taskTypeName}" was not found.`);
+        if (chosenType.mechanic !== 'adhoc') throw new Error(`"${taskTypeName}" is a Recurring-type — use the Recurring Tasks import in Admin instead.`);
+        task_type_id = chosenType.id;
+      }
+
+      let category_id = null;
+      const categoryName = (r.category_name || '').trim();
+      if (categoryName) {
+        category_id = categoryByName.get(categoryName.toLowerCase());
+        if (!category_id) throw new Error(`Subtask "${categoryName}" was not found.`);
+      }
+
+      let main_task_id = null;
+      const mainTaskName = (r.main_task_name || '').trim();
+      if (mainTaskName) {
+        main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
+        if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found.`);
+      }
+
+      const priority = (r.priority || '').trim() || 'Medium';
+      if (!['Low', 'Medium', 'High'].includes(priority)) throw new Error('priority must be Low, Medium, or High.');
+
+      const dueDate = (r.due_date || '').trim() || today();
+
+      const id = uuid();
+      await db.prepare(`
+        INSERT INTO commitments (
+          id, employee_id, scrum_date, description, type, task_type_id, category_id, main_task_id, priority,
+          start_date, due_date, original_due_date, created_by, updated_by
+        ) VALUES (?, ?, ?, ?, 'adhoc', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, employeeId, dueDate, description, task_type_id, category_id, main_task_id, priority, dueDate, dueDate, dueDate, req.user.id, req.user.id);
+
+      results.push({ row: i + 1, success: true });
+    } catch (e) {
+      results.push({ row: i + 1, success: false, error: e.message });
+    }
+  }
+  res.json({ results });
+}));
+
 /** POST /api/scrum/commitments/:id/carry-forward — push the due date out without losing the original.
  *  The task stays the SAME record; only the current due date moves. original_due_date never changes. */
 router.post('/commitments/:id/carry-forward', asyncHandler(async (req, res) => {
