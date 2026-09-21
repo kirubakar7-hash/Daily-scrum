@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { X } from 'lucide-react';
+import { X, Eye, EyeOff } from 'lucide-react';
 
 /* ---------------------------------------------------------------------------
  * Solidpro design system — shared primitives.
@@ -158,15 +158,31 @@ function RequiredMark({ required }) {
   return <span className="text-accent-600" aria-hidden="true"> *</span>;
 }
 
-export function Input({ label, className = '', required, ...props }) {
+export function Input({ label, className = '', required, type, ...props }) {
+  const [revealed, setRevealed] = useState(false);
+  const isPassword = type === 'password';
   return (
     <label className="block">
       {label && <span className="block text-sm font-medium text-grey-700 mb-1">{label}<RequiredMark required={required} /></span>}
-      <input
-        required={required}
-        className={`w-full rounded-xl border border-grey-300 px-3 py-2 text-sm text-grey-900 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 ${className}`}
-        {...props}
-      />
+      <div className={isPassword ? 'relative' : undefined}>
+        <input
+          required={required}
+          type={isPassword ? (revealed ? 'text' : 'password') : type}
+          className={`w-full rounded-xl border border-grey-300 px-3 py-2 text-sm text-grey-900 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 ${isPassword ? 'pr-10' : ''} ${className}`}
+          {...props}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            onClick={() => setRevealed((v) => !v)}
+            tabIndex={-1}
+            aria-label={revealed ? 'Hide password' : 'Show password'}
+            className="absolute inset-y-0 right-0 flex items-center px-3 text-grey-400 hover:text-grey-600 transition-colors"
+          >
+            {revealed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        )}
+      </div>
     </label>
   );
 }
