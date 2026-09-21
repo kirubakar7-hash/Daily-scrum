@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Users, UsersRound, Tag, Tags, Repeat, Plus, Check, UserPlus, ListTree } from 'lucide-react';
 import { api } from '../lib/api';
-import { Badge, Button, Card, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
+import { Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
 import RecurrencePicker, { DEFAULT_RULE } from '../components/RecurrencePicker';
 import ImportButton from '../components/ImportButton';
@@ -101,6 +101,18 @@ function TeamsTab() {
     } catch (e) { setError(e.message); }
   }
 
+  if (items === null) {
+    if (loadError) {
+      return (
+        <Card>
+          <ErrorBanner message={loadError} />
+          <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>
+        </Card>
+      );
+    }
+    return <CardSkeleton lines={4} />;
+  }
+
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
@@ -124,44 +136,53 @@ function TeamsTab() {
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Team</Button>
         </div>
       </Modal>
+      {items.length === 0 ? (
+        <EmptyState icon={<IllustrationTeam className="w-14 h-14 mx-auto" />} title="No teams yet">
+          Add one above to get started.
+        </EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm mt-3">
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Team</th><th>Leader</th><th>Status</th><th colSpan={2}></th></tr></thead>
+            <tbody>
+              {items.map((t, i) => (
+                <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
+                  <td className="py-2 font-semibold text-grey-800">{t.name}</td>
+                  <td>
+                    <select
+                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
+                      value={t.leader_user_id || ''}
+                      onChange={(e) => changeLeader(t, e.target.value)}
+                    >
+                      <option value="">No leader</option>
+                      {leaders.map((l) => <option key={l.id} value={l.id}>{l.full_name}</option>)}
+                    </select>
+                  </td>
+                  <td><Badge tone={t.is_active ? 'completed' : 'support_required'}>{t.is_active ? 'Active' : 'Inactive'}</Badge></td>
+                  <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(t)}>{t.is_active ? 'Deactivate' : 'Activate'}</button></td>
+                  <td><DeleteButton confirmLabel={`Delete "${t.name}"? This can't be undone.`} onConfirm={() => remove(t)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <ErrorBanner message={loadError} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm mt-3">
-          <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Team</th><th>Leader</th><th>Status</th><th colSpan={2}></th></tr></thead>
-          <tbody>
-            {(items || []).map((t, i) => (
-              <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                <td className="py-2 font-semibold text-grey-800">{t.name}</td>
-                <td>
-                  <select
-                    className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-                    value={t.leader_user_id || ''}
-                    onChange={(e) => changeLeader(t, e.target.value)}
-                  >
-                    <option value="">No leader</option>
-                    {leaders.map((l) => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-                  </select>
-                </td>
-                <td><Badge tone={t.is_active ? 'completed' : 'support_required'}>{t.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(t)}>{t.is_active ? 'Deactivate' : 'Activate'}</button></td>
-                <td><DeleteButton confirmLabel={`Delete "${t.name}"?`} onConfirm={() => remove(t)} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
+      <ErrorBanner message={error} />
     </Card>
   );
 }
 
 /* ---------------- Categories ---------------- */
 function CategoriesTab() {
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
+  const [savedId, setSavedId] = useState(null);
 
   function load() {
     setLoadError('');
@@ -188,6 +209,8 @@ function CategoriesTab() {
     try {
       await api.patch(`/categories/${cat.id}`, { name: newName, description: newDescription });
       load();
+      setSavedId(cat.id);
+      setTimeout(() => setSavedId((id) => (id === cat.id ? null : id)), 2000);
     } catch (e) { setError(e.message); throw e; }
   }
 
@@ -197,6 +220,18 @@ function CategoriesTab() {
       await api.del(`/categories/${cat.id}`);
       load();
     } catch (e) { setError(e.message); }
+  }
+
+  if (items === null) {
+    if (loadError) {
+      return (
+        <Card>
+          <ErrorBanner message={loadError} />
+          <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>
+        </Card>
+      );
+    }
+    return <CardSkeleton lines={4} />;
   }
 
   return (
@@ -213,7 +248,7 @@ function CategoriesTab() {
             endpoint="/categories/import"
             onDone={load}
           />
-          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add</Button>
+          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Subtask</Button>
         </div>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Subtask">
@@ -224,45 +259,58 @@ function CategoriesTab() {
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Subtask</Button>
         </div>
       </Modal>
+      {items.length === 0 ? (
+        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No subtasks yet">
+          Add one above to get started.
+        </EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm mt-3">
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Name</th><th>Description</th><th>Status</th><th colSpan={2}></th></tr></thead>
+            <tbody>
+              {items.map((c, i) => (
+                <tr key={c.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
+                  <td className="py-2 pr-2">
+                    <input
+                      type="text"
+                      defaultValue={c.name}
+                      onBlur={(e) => { if (e.target.value.trim() && e.target.value !== c.name) rename(c, e.target.value, c.description); else e.target.value = c.name; }}
+                      className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+                    />
+                    {savedId === c.id && (
+                      <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
+                        <Check className="w-3 h-3" /> Saved
+                      </div>
+                    )}
+                  </td>
+                  <td className="pr-2">
+                    <input
+                      type="text"
+                      defaultValue={c.description || ''}
+                      placeholder="—"
+                      onBlur={(e) => { if (e.target.value !== (c.description || '')) rename(c, c.name, e.target.value || null); }}
+                      className="w-40 text-grey-500 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+                    />
+                  </td>
+                  <td><Badge tone={c.is_active ? 'completed' : 'support_required'}>{c.is_active ? 'Active' : 'Inactive'}</Badge></td>
+                  <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(c)}>{c.is_active ? 'Deactivate' : 'Activate'}</button></td>
+                  <td><DeleteButton confirmLabel={`Delete "${c.name}"? This can't be undone.`} onConfirm={() => remove(c)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <ErrorBanner message={loadError} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm mt-3">
-          <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Name</th><th>Description</th><th>Status</th><th colSpan={2}></th></tr></thead>
-          <tbody>
-            {items.map((c, i) => (
-              <tr key={c.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                <td className="py-2 pr-2">
-                  <input
-                    type="text"
-                    defaultValue={c.name}
-                    onBlur={(e) => { if (e.target.value.trim() && e.target.value !== c.name) rename(c, e.target.value, c.description); else e.target.value = c.name; }}
-                    className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                  />
-                </td>
-                <td className="pr-2">
-                  <input
-                    type="text"
-                    defaultValue={c.description || ''}
-                    placeholder="—"
-                    onBlur={(e) => { if (e.target.value !== (c.description || '')) rename(c, c.name, e.target.value || null); }}
-                    className="w-40 text-grey-500 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                  />
-                </td>
-                <td><Badge tone={c.is_active ? 'completed' : 'support_required'}>{c.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(c)}>{c.is_active ? 'Deactivate' : 'Activate'}</button></td>
-                <td><DeleteButton confirmLabel={`Delete "${c.name}"?`} onConfirm={() => remove(c)} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
+      <ErrorBanner message={error} />
     </Card>
   );
 }
 
 /* ---------------- Main Tasks (parked under a Category, contain individual Subtasks) ---------------- */
 function MainTasksTab() {
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(null);
   const [categories, setCategories] = useState([]);
   const [name, setName] = useState('');
   const [categoryId, setCategoryId] = useState('');
@@ -270,6 +318,7 @@ function MainTasksTab() {
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
+  const [savedId, setSavedId] = useState(null);
 
   function load() {
     setLoadError('');
@@ -305,6 +354,8 @@ function MainTasksTab() {
     try {
       await api.patch(`/main-tasks/${mt.id}`, { name: newName });
       load();
+      setSavedId(mt.id);
+      setTimeout(() => setSavedId((id) => (id === mt.id ? null : id)), 2000);
     } catch (e) { setError(e.message); throw e; }
   }
 
@@ -314,6 +365,18 @@ function MainTasksTab() {
       await api.del(`/main-tasks/${mt.id}`);
       load();
     } catch (e) { setError(e.message); }
+  }
+
+  if (items === null) {
+    if (loadError) {
+      return (
+        <Card>
+          <ErrorBanner message={loadError} />
+          <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>
+        </Card>
+      );
+    }
+    return <CardSkeleton lines={4} />;
   }
 
   return (
@@ -330,7 +393,7 @@ function MainTasksTab() {
             endpoint="/main-tasks/import"
             onDone={load}
           />
-          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add</Button>
+          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Main Task</Button>
         </div>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Main Task">
@@ -345,39 +408,52 @@ function MainTasksTab() {
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Main Task</Button>
         </div>
       </Modal>
+      {items.length === 0 ? (
+        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No Main Tasks yet">
+          Add one above to get started.
+        </EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm mt-3">
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Main Task</th><th>Subtask</th><th>Status</th><th colSpan={2}></th></tr></thead>
+            <tbody>
+              {items.map((mt, i) => (
+                <tr key={mt.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
+                  <td className="py-2 pr-2">
+                    <input
+                      type="text"
+                      defaultValue={mt.name}
+                      onBlur={(e) => { if (e.target.value.trim() && e.target.value !== mt.name) rename(mt, e.target.value); else e.target.value = mt.name; }}
+                      className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+                    />
+                    {savedId === mt.id && (
+                      <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
+                        <Check className="w-3 h-3" /> Saved
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <select
+                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
+                      value={mt.category_id || ''}
+                      onChange={(e) => updateCategory(mt, e.target.value)}
+                    >
+                      <option value="">No subtask</option>
+                      {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </td>
+                  <td><Badge tone={mt.is_active ? 'completed' : 'support_required'}>{mt.is_active ? 'Active' : 'Inactive'}</Badge></td>
+                  <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(mt)}>{mt.is_active ? 'Deactivate' : 'Activate'}</button></td>
+                  <td><DeleteButton confirmLabel={`Delete "${mt.name}"? This can't be undone.`} onConfirm={() => remove(mt)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <ErrorBanner message={loadError} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm mt-3">
-          <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Main Task</th><th>Subtask</th><th>Status</th><th colSpan={2}></th></tr></thead>
-          <tbody>
-            {items.map((mt, i) => (
-              <tr key={mt.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                <td className="py-2 pr-2">
-                  <input
-                    type="text"
-                    defaultValue={mt.name}
-                    onBlur={(e) => { if (e.target.value.trim() && e.target.value !== mt.name) rename(mt, e.target.value); else e.target.value = mt.name; }}
-                    className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                  />
-                </td>
-                <td>
-                  <select
-                    className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-                    value={mt.category_id || ''}
-                    onChange={(e) => updateCategory(mt, e.target.value)}
-                  >
-                    <option value="">No subtask</option>
-                    {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </td>
-                <td><Badge tone={mt.is_active ? 'completed' : 'support_required'}>{mt.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(mt)}>{mt.is_active ? 'Deactivate' : 'Activate'}</button></td>
-                <td><DeleteButton confirmLabel={`Delete "${mt.name}"?`} onConfirm={() => remove(mt)} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
+      <ErrorBanner message={error} />
     </Card>
   );
 }
@@ -391,14 +467,14 @@ const ROLES = [
 function UsersTab() {
   const { user: currentUser } = useAuth();
   const currentUserId = currentUser.id;
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(null);
   const [teams, setTeams] = useState([]);
   const [form, setForm] = useState({ full_name: '', email: '', password: '', role: 'employee', team_id: '', manager_id: '', job_title: '' });
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
-  const managers = useMemo(() => items.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role)), [items]);
+  const managers = useMemo(() => (items || []).filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role)), [items]);
 
   function load() {
     setLoadError('');
@@ -434,6 +510,18 @@ function UsersTab() {
     } catch (e) { setError(e.message); }
   }
 
+  if (items === null) {
+    if (loadError) {
+      return (
+        <Card>
+          <ErrorBanner message={loadError} />
+          <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>
+        </Card>
+      );
+    }
+    return <CardSkeleton lines={4} />;
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3" data-tour="admin-create-user">
@@ -444,7 +532,7 @@ function UsersTab() {
           endpoint="/users/import"
           onDone={load}
         />
-        <Button onClick={() => setFormOpen(true)}><UserPlus className="w-4 h-4" /> Create User</Button>
+        <Button onClick={() => setFormOpen(true)}><UserPlus className="w-4 h-4" /> Add User</Button>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Create User" wide>
         <div className="grid sm:grid-cols-2 gap-3">
@@ -473,6 +561,11 @@ function UsersTab() {
         <p className="text-xs text-grey-400 mb-3">
           Deactivate keeps their history and lets them be reactivated later. Delete permanently removes the account — only allowed once they have no Scrum history recorded.
         </p>
+        {items.length === 0 ? (
+          <EmptyState icon={<IllustrationTeam className="w-14 h-14 mx-auto" />} title="No users yet">
+            Add one above to get started.
+          </EmptyState>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5 pr-2">Name</th><th className="pr-2">Job Title</th><th className="pr-2">Email</th><th className="pr-2">Role</th><th className="pr-2">Team</th><th className="pr-2">Reports To</th><th className="pr-2">Status</th><th colSpan={2}></th></tr></thead>
@@ -543,7 +636,7 @@ function UsersTab() {
                   </td>
                   <td>
                     <DeleteButton
-                      confirmLabel={`Delete ${u.full_name}?`}
+                      confirmLabel={`Delete "${u.full_name}"? This can't be undone.`}
                       disabled={u.is_super_admin_protected || u.id === currentUserId}
                       onConfirm={() => removeUser(u)}
                     />
@@ -553,7 +646,9 @@ function UsersTab() {
             </tbody>
           </table>
         </div>
+        )}
         <ErrorBanner message={loadError} />
+        {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
         <ErrorBanner message={error} />
       </Card>
 
@@ -605,12 +700,13 @@ function ResetPasswordModal({ user, onClose }) {
 
 /* ---------------- Task Types ---------------- */
 function TaskTypesTab() {
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(null);
   const [name, setName] = useState('');
   const [mechanic, setMechanic] = useState('adhoc');
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
+  const [savedId, setSavedId] = useState(null);
 
   function load() {
     setLoadError('');
@@ -640,6 +736,8 @@ function TaskTypesTab() {
     try {
       await api.patch(`/task-types/${type.id}`, { name: newName });
       load();
+      setSavedId(type.id);
+      setTimeout(() => setSavedId((id) => (id === type.id ? null : id)), 2000);
     } catch (e) { setError(e.message); throw e; }
   }
 
@@ -649,6 +747,18 @@ function TaskTypesTab() {
       await api.del(`/task-types/${type.id}`);
       load();
     } catch (e) { setError(e.message); }
+  }
+
+  if (items === null) {
+    if (loadError) {
+      return (
+        <Card>
+          <ErrorBanner message={loadError} />
+          <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>
+        </Card>
+      );
+    }
+    return <CardSkeleton lines={4} />;
   }
 
   return (
@@ -669,7 +779,7 @@ function TaskTypesTab() {
             endpoint="/task-types/import"
             onDone={load}
           />
-          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add</Button>
+          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Task Type</Button>
         </div>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Task Type">
@@ -683,44 +793,56 @@ function TaskTypesTab() {
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Type</Button>
         </div>
       </Modal>
+      {items.length === 0 ? (
+        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No task types yet">
+          Add one above to get started.
+        </EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm mt-3">
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Name</th><th>Repeats?</th><th>Status</th><th colSpan={2}></th></tr></thead>
+            <tbody>
+              {items.map((t, i) => (
+                <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
+                  <td className="py-2 pr-2">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        defaultValue={t.name}
+                        onBlur={(e) => { if (e.target.value.trim() && e.target.value !== t.name) rename(t, e.target.value); else e.target.value = t.name; }}
+                        className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+                      />
+                      {t.is_protected ? <Badge tone="pending">Built-in</Badge> : null}
+                    </div>
+                    {savedId === t.id && (
+                      <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
+                        <Check className="w-3 h-3" /> Saved
+                      </div>
+                    )}
+                  </td>
+                  <td className="text-grey-500 flex items-center gap-1 py-2">{t.mechanic === 'recurring' && <Repeat className="w-3.5 h-3.5 text-brand-500" />}{t.mechanic === 'recurring' ? 'Yes' : 'No'}</td>
+                  <td><Badge tone={t.is_active ? 'completed' : 'support_required'}>{t.is_active ? 'Active' : 'Inactive'}</Badge></td>
+                  <td>
+                    {!t.is_protected && (
+                      <button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(t)}>{t.is_active ? 'Deactivate' : 'Activate'}</button>
+                    )}
+                  </td>
+                  <td><DeleteButton confirmLabel={`Delete "${t.name}"? This can't be undone.`} disabled={t.is_protected} onConfirm={() => remove(t)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <ErrorBanner message={loadError} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm mt-3">
-          <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Name</th><th>Repeats?</th><th>Status</th><th colSpan={2}></th></tr></thead>
-          <tbody>
-            {items.map((t, i) => (
-              <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                <td className="py-2 pr-2">
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      defaultValue={t.name}
-                      onBlur={(e) => { if (e.target.value.trim() && e.target.value !== t.name) rename(t, e.target.value); else e.target.value = t.name; }}
-                      className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                    />
-                    {t.is_protected ? <Badge tone="pending">Built-in</Badge> : null}
-                  </div>
-                </td>
-                <td className="text-grey-500 flex items-center gap-1 py-2">{t.mechanic === 'recurring' && <Repeat className="w-3.5 h-3.5 text-brand-500" />}{t.mechanic === 'recurring' ? 'Yes' : 'No'}</td>
-                <td><Badge tone={t.is_active ? 'completed' : 'support_required'}>{t.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                <td>
-                  {!t.is_protected && (
-                    <button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(t)}>{t.is_active ? 'Deactivate' : 'Activate'}</button>
-                  )}
-                </td>
-                <td><DeleteButton confirmLabel={`Delete "${t.name}"?`} disabled={t.is_protected} onConfirm={() => remove(t)} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
     </Card>
   );
 }
 
 /* ---------------- Recurring Tasks (master checklist) ---------------- */
 function RecurringTasksTab() {
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(null);
   const [types, setTypes] = useState([]);
   const [categories, setCategories] = useState([]);
   const [mainTasks, setMainTasks] = useState([]);
@@ -790,6 +912,18 @@ function RecurringTasksTab() {
     load();
   }
 
+  if (items === null) {
+    if (loadError) {
+      return (
+        <Card>
+          <ErrorBanner message={loadError} />
+          <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>
+        </Card>
+      );
+    }
+    return <CardSkeleton lines={4} />;
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -800,7 +934,7 @@ function RecurringTasksTab() {
           endpoint="/recurring-tasks/import"
           onDone={load}
         />
-        <Button onClick={() => setFormOpen(true)}><Repeat className="w-4 h-4" /> Build a Recurring Task</Button>
+        <Button onClick={() => setFormOpen(true)}><Repeat className="w-4 h-4" /> Add Recurring Task</Button>
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Build a Recurring Task" wide>
         <p className="text-xs text-grey-400 mb-3">
@@ -862,6 +996,7 @@ function RecurringTasksTab() {
       <Card>
         <h2 className="font-bold text-grey-900 mb-3">Every Assigned Recurring Task</h2>
         <ErrorBanner message={loadError} />
+        {loadError && <Button size="sm" variant="secondary" className="mb-3" onClick={load}>Retry</Button>}
         {items.length === 0 ? (
           <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="Nothing created yet">Build one above.</EmptyState>
         ) : (
