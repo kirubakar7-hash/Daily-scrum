@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy, CalendarClock, History as HistoryIcon } from 'lucide-react';
+import { Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy, CalendarClock, History as HistoryIcon, User, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { Badge, Button, DeleteButton, EmptyState, ErrorBanner, humanize, IllustrationEmptyList, IllustrationSearch, Input, Modal, Select, Skeleton, Textarea } from './ui';
@@ -209,7 +209,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
         />
       )}
 
-      {historyTask && <TaskHistoryModal task={historyTask} onClose={() => setHistoryTask(null)} />}
+      {historyTask && <TaskHistoryDrawer task={historyTask} onClose={() => setHistoryTask(null)} />}
 
       <ErrorBanner message={deleteError} />
       {notice && (
@@ -768,37 +768,70 @@ function RequestModal({ task, kind, onClose, onSubmitted }) {
   );
 }
 
-/** "View History" popout — every recorded change to this one task (created, status, due date, deletion,
- *  etc.), each entry showing who did it and when. Reuses the exact same formatting as the org-wide Audit
- *  Log page (AuditTimeline), just scoped to a single task via GET /commitments/:id/history. */
-function TaskHistoryModal({ task, onClose }) {
+/** "View History" panel — docked to the right edge of the screen rather than a centered popout, so the
+ *  task list underneath stays visible and usable while it's open. Every recorded change to this one task
+ *  (created, status, due date, deletion, etc.), each entry showing who did it and when. Reuses the exact
+ *  same formatting as the org-wide Audit Log page (AuditTimeline), just scoped to a single task via
+ *  GET /commitments/:id/history. */
+function TaskHistoryDrawer({ task, onClose }) {
   const [logs, setLogs] = useState(null);
   const [error, setError] = useState('');
   const code = task.seq ? `TSK-${String(task.seq).padStart(6, '0')}` : null;
 
   useEffect(() => {
+    setLogs(null);
+    setError('');
     api.get(`/scrum/commitments/${task.id}/history`)
       .then((d) => setLogs(d.logs))
       .catch((e) => setError(e.message || "Couldn't load this task's history."));
   }, [task.id]);
 
+  // Escape-to-close, matching every other dismissable panel in the app.
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <Modal open onClose={onClose} title="Task History">
-      <div className="space-y-3">
-        <div>
-          <p className="text-sm font-semibold text-grey-800">{task.description}</p>
-          {code && <p className="text-xs text-grey-400 font-mono mt-0.5">{code}</p>}
+    <aside className="fixed top-16 bottom-0 right-0 z-30 w-full sm:w-[420px] bg-white border-l border-grey-100 shadow-xl shadow-grey-900/10 flex flex-col animate-fade-in-up">
+      <div className="px-4 py-3.5 border-b border-grey-100 shrink-0 flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {code && <span className="shrink-0 text-xs font-mono font-semibold bg-brand-50 text-brand-700 px-2 py-0.5 rounded-md border border-brand-100">{code}</span>}
+            {task.employee_name && (
+              <span className="flex items-center gap-1 text-xs text-grey-500 truncate">
+                <User className="w-3.5 h-3.5 shrink-0 text-grey-400" />
+                {task.employee_name}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-grey-400 hover:text-grey-700 hover:bg-grey-100 transition-colors shrink-0 press-scale"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <h2 className="font-bold text-grey-900 text-sm leading-snug">{task.description}</h2>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+        <div className="flex items-start gap-2 bg-grey-50 border border-grey-100 rounded-lg px-3 py-2 text-xs text-grey-500 leading-relaxed">
+          <HistoryIcon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-grey-400" />
+          <span>A permanent record of every change to this task. <span className="text-amber-700 font-medium">Amber</span> entries mean the due date was changed from its original schedule.</span>
         </div>
         <ErrorBanner message={error} />
         {!error && logs === null && (
           <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
           </div>
         )}
         {!error && logs !== null && (
           <AuditTimeline logs={logs} emptyTitle="No history yet" emptyBody="Nothing recorded for this task yet." />
         )}
       </div>
-    </Modal>
+    </aside>
   );
 }

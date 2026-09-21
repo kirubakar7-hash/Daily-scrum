@@ -1,4 +1,4 @@
-import { Pencil, Trash2, Plus, Mail } from 'lucide-react';
+import { Pencil, Trash2, Plus, Mail, CalendarClock } from 'lucide-react';
 import { EmptyState, IllustrationEmptyList, Timeline, humanize } from './ui';
 
 const SUBJECT_LABELS = {
@@ -30,20 +30,31 @@ function describeLog(l) {
   if (l.field_name === 'deleted') return { icon: Trash2, tone: 'accent', title: `${subject} deleted`, detail: l.old_value };
   if (l.field_name === 'password') return { icon: Pencil, tone: 'brand', title: `${subject} password was reset`, detail: null };
   if (l.field_name === 'support_requested') return { icon: Pencil, tone: 'accent', title: 'Flagged as needing support — waiting in the Requests inbox', detail: null };
-  if (l.field_name === 'carried_forward') return { icon: Pencil, tone: 'brand', title: `${subject} due date changed`, detail: `now due ${l.new_value}` };
-  if (l.field_name === 'due_date_change_rejected') return { icon: Pencil, tone: 'accent', title: `${subject} due-date-change request rejected`, detail: `stayed at ${l.old_value}` };
+  // Amber, not brand — matches the due-date cell's own "amber means changed from the original" convention.
+  if (l.field_name === 'carried_forward') return { icon: CalendarClock, tone: 'amber', title: `${subject} due date changed`, detail: { from: l.old_value, to: l.new_value } };
+  if (l.field_name === 'due_date_change_rejected') return { icon: CalendarClock, tone: 'accent', title: `${subject} due-date-change request rejected`, detail: `stayed at ${l.old_value}` };
   if (l.field_name === 'assigned') return { icon: Plus, tone: 'brand', title: 'Recurring task assigned', detail: l.new_value };
   if (l.field_name === 'is_active') return { icon: Pencil, tone: l.new_value === '1' ? 'success' : 'accent', title: `${subject} ${l.new_value === '1' ? 'activated' : 'deactivated'}`, detail: null };
 
   const fieldLabel = FIELD_LABELS[l.field_name] || humanize(l.field_name);
   if (ID_FIELDS.has(l.field_name)) return { icon: Pencil, tone: 'brand', title: `${subject} — ${fieldLabel} changed`, detail: null };
+  if (l.field_name === 'due_date') return { icon: CalendarClock, tone: 'amber', title: `${subject} — ${fieldLabel} changed`, detail: { from: l.old_value, to: l.new_value } };
   return { icon: Pencil, tone: 'brand', title: `${subject} — ${fieldLabel} changed`, detail: { from: l.old_value, to: l.new_value } };
 }
 
-/** Renders a list of raw audit_logs rows as a Timeline — every entry: icon + plain-English title +
- *  timestamp, an old→new diff chip (or single value) where relevant, and a "Changed by {name}" footer so
- *  it's always clear who did what. Used by both the org-wide Audit Log page (client/src/pages/AuditLog.jsx)
- *  and TeamTaskList.jsx's per-task History popout. */
+// One place mapping each tone to its icon color + label-chip classes, so every entry type stays visually
+// consistent without repeating the same ternary chain at every call site.
+const TONE_STYLES = {
+  accent: { icon: 'text-accent-600', chip: 'bg-accent-50 text-accent-700' },
+  success: { icon: 'text-emerald-600', chip: 'bg-emerald-50 text-emerald-700' },
+  amber: { icon: 'text-amber-600', chip: 'bg-amber-50 text-amber-700' },
+  brand: { icon: 'text-brand-600', chip: 'bg-brand-50 text-brand-700' },
+};
+
+/** Renders a list of raw audit_logs rows as a Timeline of cards — every entry: a colored label chip +
+ *  timestamp, an old→new diff (or single value) where relevant, and a "Changed by {name}" footer so it's
+ *  always clear who did what. Used by both the org-wide Audit Log page (client/src/pages/AuditLog.jsx)
+ *  and TeamTaskList.jsx's per-task History drawer, so the two never describe the same change differently. */
 export default function AuditTimeline({ logs, emptyTitle = 'No changes recorded yet', emptyBody = 'Once something important changes, it will show up here.' }) {
   if (logs.length === 0) {
     return <EmptyState icon={<IllustrationEmptyList className="w-16 h-16 mx-auto" />} title={emptyTitle}>{emptyBody}</EmptyState>;
@@ -54,14 +65,15 @@ export default function AuditTimeline({ logs, emptyTitle = 'No changes recorded 
       items={timelineItems}
       renderItem={(l) => {
         const Icon = l.icon;
+        const styles = TONE_STYLES[l.tone] || TONE_STYLES.brand;
         return (
-          <div className="text-sm">
+          <div className="bg-white border border-grey-100 rounded-xl p-2.5 hover:border-grey-200 transition-colors">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <span className="inline-flex items-center gap-1.5 font-semibold text-grey-800">
-                <Icon className={`w-3.5 h-3.5 shrink-0 ${l.tone === 'accent' ? 'text-accent-600' : l.tone === 'success' ? 'text-emerald-600' : 'text-brand-600'}`} />
+              <span className={`inline-flex items-center gap-1 text-xs font-semibold px-1.5 py-0.5 rounded ${styles.chip}`}>
+                <Icon className="w-3 h-3 shrink-0" />
                 {l.title}
               </span>
-              <span className="text-grey-400 text-xs whitespace-nowrap">{l.changed_at}</span>
+              <span className="text-grey-400 text-[11px] whitespace-nowrap">{l.changed_at}</span>
             </div>
             {l.detail && typeof l.detail === 'object' && l.detail.from !== null && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -78,9 +90,9 @@ export default function AuditTimeline({ logs, emptyTitle = 'No changes recorded 
             {l.detail && typeof l.detail === 'string' && (
               <div className="mt-1 text-xs text-grey-500">{l.detail}</div>
             )}
-            <div className="text-xs text-grey-400 mt-1.5">
-              Changed by {l.changed_by_name || 'system'}
-              {l.owner_name && l.owner_name !== l.changed_by_name && <> on behalf of <strong className="text-grey-600">{l.owner_name}</strong></>}
+            <div className="text-[11px] text-grey-400 mt-1.5 pt-1.5 border-t border-grey-100">
+              Changed by <strong className="text-grey-600 font-medium">{l.changed_by_name || 'system'}</strong>
+              {l.owner_name && l.owner_name !== l.changed_by_name && <> on behalf of <strong className="text-grey-600 font-medium">{l.owner_name}</strong></>}
               {l.reason ? ` — ${l.reason}` : ''}
             </div>
           </div>

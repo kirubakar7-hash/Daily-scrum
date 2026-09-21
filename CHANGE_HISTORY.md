@@ -211,3 +211,14 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** New test `task history — records a "created" entry, is visible to the task's owner and anyone above them, and blocked for everyone else` in `server/test/api.integration.test.js`. Full suite: 59/59 passing.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Redesigned the "View History" panel — from a centered modal popout to a docked panel on the right edge of the screen (420px wide), so the task list stays visible and usable underneath while it's open. Also restyled every history entry (both here and on the org-wide Audit Log page) into individual bordered cards, and gave due-date changes their own amber color to match the due-date cell's existing "amber means changed" convention, instead of the generic blue every other change used.
+**Reason:** Explicit request, from a provided HTML mockup. Scoped down after clarifying: kept the app's real Solidpro branding (brand blue, Maven Pro font, lucide icons) rather than the mockup's own unrelated color palette/fonts, and left out two mockup features that don't exist yet ("Add Note", "Revert") since they'd need their own separate design.
+**Files:** `client/src/components/TeamTaskList.jsx` (`TaskHistoryModal` → `TaskHistoryDrawer`, now `position: fixed` docked right, no backdrop, Escape-to-close), `client/src/components/AuditTimeline.jsx` (shared by both this drawer and Audit Log — restyled to card-per-entry, added the amber tone for due-date changes), `client/src/components/ui.jsx` (`Timeline`'s dot color gained the amber option).
+**Database:** No schema change.
+**Tests:** No new tests needed — pure UI restyle, no behavior changed. `npm run build` passed clean.
+**Deployment:** Live.
+**Cost:** None.

@@ -591,7 +591,7 @@ export function Timeline({ items, renderItem }) {
     <ol className="relative border-l-2 border-grey-100 ml-2">
       {items.map((item, i) => (
         <li key={item.id ?? i} className="pl-5 pb-5 last:pb-0 relative animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-          <span className={`absolute -left-[7px] top-1 w-3 h-3 rounded-full ring-4 ring-white ${item.tone === 'accent' ? 'bg-accent-500' : item.tone === 'success' ? 'bg-emerald-500' : 'bg-brand-500'}`} />
+          <span className={`absolute -left-[7px] top-1 w-3 h-3 rounded-full ring-4 ring-white ${item.tone === 'accent' ? 'bg-accent-500' : item.tone === 'success' ? 'bg-emerald-500' : item.tone === 'amber' ? 'bg-amber-500' : 'bg-brand-500'}`} />
           {renderItem(item, i)}
         </li>
       ))}
