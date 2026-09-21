@@ -11,11 +11,14 @@ const WIDE_OPEN_ROLES = ['super_admin', 'admin', 'senior_management'];
  *  Tasks tab, so there's one obvious place to do it, not three. */
 export default function AllTasks() {
   const { user } = useAuth();
-  const description = WIDE_OPEN_ROLES.includes(user.role)
-    ? "Every task across the organization. You can only update your own — a Leader can update anyone's."
-    : user.role === 'leader'
-      ? 'Your tasks and everyone reporting to you. You can update anyone in your chain.'
-      : 'Your own tasks.';
+  const readOnly = user.role === 'senior_management';
+  const description = readOnly
+    ? 'A read-only view of every task across the organization.'
+    : WIDE_OPEN_ROLES.includes(user.role)
+      ? "Every task across the organization. You can only update your own — a Leader can update anyone's."
+      : user.role === 'leader'
+        ? 'Your tasks and everyone reporting to you. You can update anyone in your chain.'
+        : 'Your own tasks.';
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2.5 animate-fade-in-up">

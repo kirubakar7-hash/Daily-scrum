@@ -30,7 +30,9 @@ export default function MyTasks() {
         </div>
         <div>
           <h1 className="text-lg font-bold text-grey-900">My Tasks</h1>
-          <p className="text-grey-500 text-sm mt-0.5">Everything assigned to you — create, update, and request help or a new due date.</p>
+          <p className="text-grey-500 text-sm mt-0.5">
+            {readOnly ? 'A read-only view of everything assigned to you.' : 'Everything assigned to you — create, update, and request help or a new due date.'}
+          </p>
         </div>
       </div>
       <Card className="animate-fade-in-up">
