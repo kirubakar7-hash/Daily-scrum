@@ -463,6 +463,15 @@ test('hierarchy — a plain Employee\'s Team Tasks view only shows their own tas
   assert.ok(!taskIds.includes(ids.reportBTaskId), 'must not include a coworker\'s task');
 });
 
+test('hierarchy — Team Today includes Leaders/Admins in the roster for wide-open roles, not just Employees', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const res = await fetch(`${baseUrl}/api/leader/team-today`, { headers: authed(adminLogin.token) });
+  const { team } = await res.json();
+  const rosterIds = team.map((t) => t.employee_id);
+  assert.ok(rosterIds.includes(ids.topLeaderId), 'an Admin must see a Leader in Team Today\'s roster, same as org-tasks already shows');
+  assert.ok(rosterIds.includes(ids.adminId), 'an Admin must see another Admin in Team Today\'s roster too');
+});
+
 test('hierarchy — GET /api/users is scoped to self+reports for a Leader, stays org-wide for Admin', async () => {
   const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
   const leaderRes = await fetch(`${baseUrl}/api/users`, { headers: authed(midLeaderALogin.token) });

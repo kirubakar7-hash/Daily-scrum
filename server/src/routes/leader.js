@@ -16,7 +16,10 @@ async function scopedEmployees(user) {
     const placeholders = ids.map(() => '?').join(',');
     return await db.prepare(`SELECT * FROM users WHERE id IN (${placeholders}) AND is_active = 1 ORDER BY full_name`).all(...ids);
   }
-  return await db.prepare(`SELECT * FROM users WHERE role = 'employee' AND is_active = 1 ORDER BY full_name`).all();
+  // Wide-open roles (Super Admin, Admin, Senior Management) — same "everyone, org-wide" set org-tasks
+  // already uses below. Previously this fell back to role='employee' only, silently dropping other
+  // Leaders/Admins from Team Today's and Team Tasks' roster.
+  return await allActiveUsers();
 }
 
 /** Every active user, any role — unlike scopedEmployees() this isn't team-scoped and isn't limited to
