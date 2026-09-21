@@ -57,9 +57,7 @@ export default function Admin() {
 /* ---------------- Teams ---------------- */
 function TeamsTab() {
   const [items, setItems] = useState(null);
-  const [leaders, setLeaders] = useState([]);
   const [name, setName] = useState('');
-  const [leaderId, setLeaderId] = useState('');
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
@@ -67,7 +65,6 @@ function TeamsTab() {
   function load() {
     setLoadError('');
     api.get('/teams').then((d) => setItems(d.teams)).catch((e) => setLoadError(e.message || "Couldn't load teams."));
-    api.get('/users').then((d) => setLeaders(d.users.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role)))).catch(() => {});
   }
   useEffect(() => { load(); }, []);
 
@@ -75,22 +72,14 @@ function TeamsTab() {
     setError('');
     if (!name.trim()) return setError('Name is required.');
     try {
-      await api.post('/teams', { name, leader_user_id: leaderId || null });
-      setName(''); setLeaderId(''); setFormOpen(false); load();
+      await api.post('/teams', { name });
+      setName(''); setFormOpen(false); load();
     } catch (e) { setError(e.message); }
   }
 
   async function toggle(team) {
     await api.patch(`/teams/${team.id}`, { is_active: team.is_active ? 0 : 1 });
     load();
-  }
-
-  async function changeLeader(team, leader_user_id) {
-    setError('');
-    try {
-      await api.patch(`/teams/${team.id}`, { leader_user_id: leader_user_id || null });
-      load();
-    } catch (e) { setError(e.message); }
   }
 
   async function remove(team) {
@@ -118,8 +107,8 @@ function TeamsTab() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <ImportButton
           entityLabel="Teams"
-          headers={['name', 'leader_email']}
-          example={{ name: 'Finance Operations', leader_email: 'leader@company.com' }}
+          headers={['name']}
+          example={{ name: 'Finance Operations' }}
           endpoint="/teams/import"
           onDone={load}
         />
@@ -128,14 +117,15 @@ function TeamsTab() {
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Team">
         <div className="space-y-3">
           <Input label="Team name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Select label="Leader" value={leaderId} onChange={(e) => setLeaderId(e.target.value)}>
-            <option value="">No leader</option>
-            {leaders.map((l) => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-          </Select>
           <ErrorBanner message={error} />
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Team</Button>
         </div>
       </Modal>
+      {items.length > 0 && (
+        <p className="text-xs text-grey-400 mb-3">
+          Leader is figured out automatically — whoever on the team most other members report to. Change it by updating "Reports To" under Admin → Users.
+        </p>
+      )}
       {items.length === 0 ? (
         <EmptyState icon={<IllustrationTeam className="w-14 h-14 mx-auto" />} title="No teams yet">
           Add one above to get started.
@@ -148,16 +138,7 @@ function TeamsTab() {
               {items.map((t, i) => (
                 <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
                   <td className="py-2 font-semibold text-grey-800">{t.name}</td>
-                  <td>
-                    <select
-                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-                      value={t.leader_user_id || ''}
-                      onChange={(e) => changeLeader(t, e.target.value)}
-                    >
-                      <option value="">No leader</option>
-                      {leaders.map((l) => <option key={l.id} value={l.id}>{l.full_name}</option>)}
-                    </select>
-                  </td>
+                  <td className="text-grey-600">{t.leader_name || <span className="text-grey-300">—</span>}</td>
                   <td><Badge tone={t.is_active ? 'completed' : 'support_required'}>{t.is_active ? 'Active' : 'Inactive'}</Badge></td>
                   <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(t)}>{t.is_active ? 'Deactivate' : 'Activate'}</button></td>
                   <td><DeleteButton confirmLabel={`Delete "${t.name}"? This can't be undone.`} onConfirm={() => remove(t)} /></td>

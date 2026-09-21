@@ -321,19 +321,36 @@ test('import — users: one valid row succeeds, one row with a pre-existing emai
   assert.equal(loginAsImported.status, 200, 'the imported user must actually be able to log in');
 });
 
-test('import — teams: valid row succeeds, row with an unknown leader email fails', async () => {
+test('import — teams: valid row succeeds, a duplicate name within the same file fails', async () => {
   const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
   const res = await fetch(`${baseUrl}/api/teams/import`, {
     method: 'POST', headers: authed(saLogin.token),
     body: JSON.stringify({ rows: [
-      { name: 'Imported Team', leader_email: 'admin@test.local' },
-      { name: 'Bad Leader Team', leader_email: 'nobody-such@test.local' },
+      { name: 'Imported Team' },
+      { name: 'Imported Team' },
     ] }),
   });
   const { results } = await res.json();
   assert.equal(results[0].success, true);
   assert.equal(results[1].success, false);
-  assert.match(results[1].error, /no user found/i);
+  assert.match(results[1].error, /duplicate/i);
+});
+
+test('teams — a team\'s leader is computed from who most members report to, not a stored field', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const teamRes = await fetch(`${baseUrl}/api/teams`, {
+    method: 'POST', headers: authed(saLogin.token), body: JSON.stringify({ name: 'Computed Leader Team' }),
+  });
+  const { team } = await teamRes.json();
+
+  await fetch(`${baseUrl}/api/users/${ids.midLeaderAId}`, { method: 'PATCH', headers: authed(saLogin.token), body: JSON.stringify({ team_id: team.id }) });
+  await fetch(`${baseUrl}/api/users/${ids.reportAId}`, { method: 'PATCH', headers: authed(saLogin.token), body: JSON.stringify({ team_id: team.id }) });
+
+  const teamsRes = await fetch(`${baseUrl}/api/teams`, { headers: authed(saLogin.token) });
+  const { teams } = await teamsRes.json();
+  const updated = teams.find((t) => t.id === team.id);
+  assert.equal(updated.leader_name, 'Mid Leader A', 'Mid Leader A manages the other member (Report A), so they must be the computed leader');
+  assert.equal('leader_user_id' in updated, false, 'leader_user_id is no longer a field the API returns — leader_name is computed instead');
 });
 
 test('import — task types: valid row succeeds, row with an invalid mechanic fails', async () => {

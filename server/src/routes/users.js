@@ -200,9 +200,10 @@ router.delete('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (r
     return res.status(400).json({ error: "You can't delete the account you're currently logged in as." });
   }
 
-  // Anything with real Scrum history must be kept — deactivate instead of deleting.
+  // Anything with real Scrum history must be kept — deactivate instead of deleting. Team leadership is
+  // no longer a stored field (it's computed live from manager_id), so "people reporting to them" below is
+  // the real, current guard — a team's computed leader is just whoever that already protects.
   const linkedCounts = {
-    'a team they lead': (await db.prepare('SELECT COUNT(*) c FROM teams WHERE leader_user_id = ?').get(target.id)).c,
     'people reporting to them': (await db.prepare('SELECT COUNT(*) c FROM users WHERE manager_id = ?').get(target.id)).c,
     commitments: (await db.prepare('SELECT COUNT(*) c FROM commitments WHERE employee_id = ?').get(target.id)).c,
     actions: (await db.prepare('SELECT COUNT(*) c FROM actions WHERE employee_id = ?').get(target.id)).c,
