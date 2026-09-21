@@ -472,6 +472,13 @@ test('hierarchy — Team Today includes Leaders/Admins in the roster for wide-op
   assert.ok(rosterIds.includes(ids.adminId), 'an Admin must see another Admin in Team Today\'s roster too');
 });
 
+test('hierarchy — Admin\'s own Dashboard counts every active user, org-wide, not just Employees', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const res = await fetch(`${baseUrl}/api/dashboard/leader`, { headers: authed(adminLogin.token) });
+  const data = await res.json();
+  assert.ok(data.team_members >= 8, 'must count every active user (Leaders and Admins included), not just role=employee');
+});
+
 test('hierarchy — GET /api/users is scoped to self+reports for a Leader, stays org-wide for Admin', async () => {
   const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
   const leaderRes = await fetch(`${baseUrl}/api/users`, { headers: authed(midLeaderALogin.token) });

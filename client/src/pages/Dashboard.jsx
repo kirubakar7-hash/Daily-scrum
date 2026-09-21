@@ -47,7 +47,7 @@ export default function Dashboard() {
   }
 
   if (isOrgView) return <OrgDashboard data={data} role={user.role} />;
-  if (isLeaderView) return <LeaderDashboard data={data} />;
+  if (isLeaderView) return <LeaderDashboard data={data} role={user.role} />;
   return <EmployeeDashboard data={data} />;
 }
 
@@ -183,16 +183,20 @@ function OrgDashboard({ data, role }) {
   );
 }
 
-function LeaderDashboard({ data }) {
+function LeaderDashboard({ data, role }) {
   const attn = data.attention_required;
   const hasAttention = attn && Object.values(attn).some((arr) => arr.length > 0);
+  // An Admin has org-wide scope, same as Super Admin everywhere else — "My Team Today" undersold what
+  // this screen actually shows them, so the heading and count now say so plainly.
+  const heading = role === 'admin' ? 'Organization Today' : 'My Team Today';
+  const teamLabel = role === 'admin' ? `${data.team_members} people across the organization` : `${data.team_members} people on your team`;
 
   return (
     <div className="space-y-3">
       <div className="animate-fade-in-up">
-        <h1 className="text-lg font-bold text-grey-900">My Team Today</h1>
+        <h1 className="text-lg font-bold text-grey-900">{heading}</h1>
         <p className="text-grey-500 text-sm mt-0.5">
-          <Link to="/team" className="text-brand-600 font-semibold hover:underline">{data.team_members} people on your team</Link>
+          <Link to="/team" className="text-brand-600 font-semibold hover:underline">{teamLabel}</Link>
           {' '}· {data.pending} task{data.pending === 1 ? '' : 's'} pending
         </p>
       </div>

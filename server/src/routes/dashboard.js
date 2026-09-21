@@ -72,7 +72,10 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
     const activeIds = new Set((await db.prepare('SELECT id FROM users WHERE is_active=1').all()).map((r) => r.id));
     teamIds = (await subordinateIds(req.user.id)).filter((id) => activeIds.has(id));
   } else {
-    teamIds = (await db.prepare(`SELECT id FROM users WHERE role='employee' AND is_active=1`).all()).map((r) => r.id);
+    // Admin/Super Admin/Senior Management — every active user, org-wide, same population org-tasks and
+    // Team Today already use. Previously filtered to role='employee' only, which silently excluded other
+    // Leaders/Admins from Admin's own dashboard numbers.
+    teamIds = (await db.prepare(`SELECT id FROM users WHERE is_active=1`).all()).map((r) => r.id);
   }
 
   const empIds = teamIds.length ? teamIds : ['__none__'];
@@ -115,7 +118,7 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
   const repeatedSupportRequests = await db.prepare(`
     SELECT description, employee_id, COUNT(*) c FROM commitments
     WHERE status='support_required' AND employee_id IN (${clause}) AND created_at >= datetime('now', '-30 days')
-    GROUP BY employee_id, description HAVING c >= 2 ORDER BY c DESC LIMIT 10
+    GROUP BY employee_id, description HAVING COUNT(*) >= 2 ORDER BY c DESC LIMIT 10
   `).all(...empIds);
 
   const openEscalations = await db.prepare(`
@@ -131,7 +134,7 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
       COUNT(c.id) AS total_count
     FROM users u LEFT JOIN commitments c ON c.employee_id = u.id AND c.created_at >= datetime('now', '-30 days')
     WHERE u.id IN (${clause})
-    GROUP BY u.id HAVING total_count >= 3 AND (adhoc_count * 1.0 / total_count) > 0.5
+    GROUP BY u.id HAVING COUNT(c.id) >= 3 AND (SUM(CASE WHEN c.type='adhoc' THEN 1 ELSE 0 END) * 1.0 / COUNT(c.id)) > 0.5
   `).all(...empIds);
 
   res.json({
