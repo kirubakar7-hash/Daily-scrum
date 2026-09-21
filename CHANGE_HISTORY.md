@@ -283,3 +283,15 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** Verified the sort/indent logic directly against the real 6-person dataset from the live screenshot (Kirubakar B → Anudeep → {Rajeshwari → Shreenidhi, Renuka → Jeyant}) — produces the expected top-to-bottom order and depth. `npm run build` clean. Not manually verified in the browser — doing so requires being logged in as an Admin/Super Admin, and per this project's standing rule I never enter a password into any field myself.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Role now renders as a color-coded pill in Admin → Users instead of a plain bordered dropdown that looked identical to the Team dropdown next to it.
+**Reason:** Follow-up to the hierarchy update — user flagged that Role, Job Title, and Team all matter and asked for the best treatment per role; agreed Role deserved the most visual weight of the three, so it's the one that became a scannable color, while Job Title and Team stay as plain editable fields.
+**Files:** `client/src/components/ui.jsx` (5 new role keys added to the shared `badgeColors` map: `employee`, `leader`, `admin`, `super_admin`, `senior_management`), `client/src/pages/Admin.jsx` (Role `<select>` restyled with `badgeClassFor(u.role)`, same pattern already proven on TeamTaskList's editable status dropdown — still a live, always-editable select, same `onChange`, just styled as a pill instead of a box).
+**Design:** Colors form a deliberate authority ladder within the brand blue used for structural chrome everywhere else in the app — Employee (grey baseline) → Leader (light brand) → Admin (medium brand) → Super Admin (solid brand fill, the boldest badge in the app). Senior Management gets its own amber, since it's a genuinely different track (read-only oversight) rather than another rung on the authority ladder.
+**Database:** No schema change. No backend/permission change.
+**Tests:** `npm run build` clean; confirmed every role key used in the app (`ROLES` in Admin.jsx) has a matching entry in the new color map. Not manually verified in the browser for the same reason as the hierarchy update above.
+**Deployment:** Live.
+**Cost:** None.
