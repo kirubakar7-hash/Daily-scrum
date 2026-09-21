@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 
 const STORAGE_KEY = 'dsm_welcome_dismissed';
 
@@ -82,7 +83,14 @@ export default function WelcomeBanner({ role, name, onStartTour }) {
             </button>
           )}
         </div>
-        <button onClick={dismiss} className="relative text-brand-100 hover:text-white text-sm whitespace-nowrap transition-colors press-scale">✕ Close</button>
+        <button
+          type="button"
+          onClick={dismiss}
+          aria-label="Close"
+          className="relative w-8 h-8 rounded-full flex items-center justify-center text-brand-100 hover:text-white hover:bg-white/10 transition-colors shrink-0 press-scale"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy, CalendarClock, History as HistoryIcon, User, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
-import { Badge, Button, DeleteButton, EmptyState, ErrorBanner, humanize, IllustrationEmptyList, IllustrationSearch, Input, Modal, Select, Skeleton, Textarea } from './ui';
+import { badgeClassFor, Badge, Button, DeleteButton, EmptyState, ErrorBanner, humanize, IllustrationEmptyList, IllustrationSearch, Input, Modal, Select, Skeleton, Textarea } from './ui';
 import RecurrencePicker, { DEFAULT_RULE } from './RecurrencePicker';
 import InfoTip from './InfoTip';
 import ImportButton from './ImportButton';
@@ -279,7 +279,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
           {user.role === 'super_admin' && (
             <DeleteButton
               label={`Delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}`}
-              confirmLabel={`Permanently delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}?`}
+              confirmLabel={`Permanently delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}? This can't be undone.`}
               disabled={bulkBusy}
               onConfirm={bulkDelete}
             />
@@ -411,7 +411,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                       )}
                       {!rowReadOnly && (
                         <DeleteButton
-                          confirmLabel="Delete?"
+                          confirmLabel={`Delete "${t.description}"? This can't be undone.`}
                           disabled={user.role === 'super_admin' ? false : (t.created_by !== user.id || !['leader', 'admin'].includes(user.role))}
                           onConfirm={() => remove(t)}
                         />
@@ -470,7 +470,7 @@ function StatusDropdown({ task, onChanged }) {
         value={task.status}
         onChange={change}
         disabled={saving}
-        className={`text-xs font-semibold rounded-full px-2.5 py-2 sm:py-1 border-0 min-h-[40px] sm:min-h-0 cursor-pointer transition-opacity ${saving ? 'opacity-60' : ''} ${badgeClass(task.status)}`}
+        className={`text-xs font-semibold rounded-full px-2.5 py-2 sm:py-1 border-0 min-h-[40px] sm:min-h-0 cursor-pointer transition-opacity ${saving ? 'opacity-60' : ''} ${badgeClassFor(task.status)}`}
       >
         {options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
       </select>
@@ -604,13 +604,6 @@ function DueDateCell({ task, onChanged }) {
       {error && <div className="text-accent-600 text-xs">{error}</div>}
     </div>
   );
-}
-
-function badgeClass(status) {
-  if (status === 'completed') return 'bg-emerald-100 text-emerald-700';
-  if (status === 'support_required') return 'bg-accent-100 text-accent-700';
-  if (status === 'in_progress') return 'bg-brand-100 text-brand-700';
-  return 'bg-grey-100 text-grey-600';
 }
 
 function CreateTaskForm({ assignees: assigneesProp, onCreated }) {

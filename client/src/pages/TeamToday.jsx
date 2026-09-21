@@ -19,6 +19,7 @@ export default function TeamToday() {
   const [loadError, setLoadError] = useState('');
   const [tab, setTab] = useState('Team Overview');
   const readOnly = user.role === 'senior_management';
+  const canReachAdmin = user.role === 'admin' || user.role === 'super_admin';
 
   function load() {
     setLoadError('');
@@ -47,7 +48,7 @@ export default function TeamToday() {
         <div>
           <h1 className="text-lg font-bold text-grey-900 flex items-center gap-2">
             <ClipboardList className="w-5 h-5 text-brand-600" />
-            Daily Scrum — {new Date().toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
+            Daily Scrum — {today}
           </h1>
           {team.length > 0 && (
             <p className="text-sm text-grey-500 mt-0.5">
@@ -83,7 +84,9 @@ export default function TeamToday() {
 
           {team.length === 0 ? (
             <EmptyState icon={<IllustrationTeam className="w-16 h-16 mx-auto" />} title="No team members assigned yet">
-              Ask your Admin to assign employees to your team under Admin → Teams.
+              {canReachAdmin
+                ? 'Set the "Reports To" field for employees under Admin → Users to build out your team.'
+                : 'No employees are set to report to you yet.'}
             </EmptyState>
           ) : (
             <div className="overflow-x-auto mt-2">

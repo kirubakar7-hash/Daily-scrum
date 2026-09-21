@@ -236,6 +236,13 @@ const badgeColors = {
   Low: 'bg-grey-100 text-grey-700 ring-1 ring-grey-500/15',
 };
 
+/** Same lookup the read-only Badge uses below, exported so an editable control showing one of these same
+ *  values (e.g. TeamTaskList's editable status dropdown) can render in the exact same color instead of
+ *  maintaining its own separate, divergent color map. */
+export function badgeClassFor(tone) {
+  return badgeColors[tone] || 'bg-grey-100 text-grey-700 ring-1 ring-grey-500/15';
+}
+
 export function Badge({ children, tone }) {
   const cls = badgeColors[tone] || badgeColors[children] || 'bg-grey-100 text-grey-700 ring-1 ring-grey-500/15';
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cls}`}>{humanize(children)}</span>;
@@ -617,7 +624,14 @@ export function DrillDownPanel({ title, items, tone = 'brand', onClose, emptyLab
     <div className="animate-fade-in-up rounded-2xl border border-grey-100 bg-grey-50 p-4">
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-semibold text-grey-500 uppercase tracking-wide">{title}</span>
-        <button onClick={onClose} className="text-xs font-medium text-grey-400 hover:text-grey-600 transition-colors">Close ✕</button>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="w-6 h-6 rounded-full flex items-center justify-center text-grey-400 hover:text-grey-700 hover:bg-grey-100 transition-colors shrink-0 press-scale"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
       </div>
       {items.length === 0 ? <p className="text-sm text-grey-400">{emptyLabel}</p> : <BarList items={items} tone={tone} />}
     </div>

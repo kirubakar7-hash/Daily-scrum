@@ -14,6 +14,7 @@ const NAV_BY_ROLE = {
   employee: [
     { to: '/my-tasks', label: 'My Tasks', icon: ListTodo },
     { to: '/all-tasks', label: 'Team Tasks', icon: Users },
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/history', label: 'My History', icon: History },
   ],
   senior_management: [
@@ -139,6 +140,7 @@ export default function Layout() {
               <NavLink
                 key={item.to}
                 to={item.to}
+                data-tour={`nav-${item.to.slice(1)}`}
                 onClick={() => setMobileOpen(false)}
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold ${
