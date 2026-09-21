@@ -5,7 +5,7 @@ import { db } from '../db.js';
 import { requireAuth, requireRole, ROLE_LABELS } from '../middleware/auth.js';
 import { recordAudit, auditDiff } from '../lib/audit.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
-import { visibleEmployeeIds } from '../lib/scope.js';
+import { visibleEmployeeIds, subordinateIds } from '../lib/scope.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -27,6 +27,12 @@ async function assertValidManager(managerId, targetId, res) {
   const manager = await db.prepare('SELECT role FROM users WHERE id = ?').get(managerId);
   if (!manager || !['leader', 'admin', 'super_admin'].includes(manager.role)) {
     res.status(400).json({ error: 'The manager must be a Leader, Admin, or Super Admin.' });
+    return false;
+  }
+  // Reuses subordinateIds (scope.js) rather than a second hierarchy walk — if the proposed manager
+  // already reports to the target, directly or indirectly, this assignment would close a reporting loop.
+  if (targetId && (await subordinateIds(targetId)).includes(managerId)) {
+    res.status(400).json({ error: 'This would create a reporting loop — that person already reports to this one, directly or indirectly.' });
     return false;
   }
   return true;

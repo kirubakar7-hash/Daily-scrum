@@ -44,6 +44,10 @@ export async function canViewEmployee(user, employeeId) {
  *  else's task. */
 export async function canActOnEmployee(user, employeeId) {
   if (user.id === employeeId) return true;
+  // A deactivated target is off-limits to everyone but themself — the frontend picker already hides
+  // deactivated people, but that's cosmetic; this is the actual backend guarantee.
+  const target = await db.prepare('SELECT is_active FROM users WHERE id = ?').get(employeeId);
+  if (!target || !target.is_active) return false;
   if (['super_admin', 'admin'].includes(user.role)) return true;
   if (user.role === 'leader') return (await subordinateIds(user.id)).includes(employeeId);
   return false;

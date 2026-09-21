@@ -502,13 +502,21 @@ router.delete('/commitments/:id', asyncHandler(async (req, res) => {
   if (commitment.carried_forward_to_id) {
     return res.status(400).json({ error: 'This task already created a follow-up task for someone else, so it can\'t be deleted. Change its status instead.' });
   }
-  // Auto-resolve any request still pending against this task first — otherwise it becomes permanently
-  // unreachable (the Requests inbox joins to the commitment it points at) and sits pending forever.
+  // requests.commitment_id is NOT NULL with no ON DELETE clause, so any request row referencing this
+  // commitment — pending or already resolved — would fail the delete below with a raw foreign-key error.
+  // A still-pending one needs its own trace before it disappears (the outcome is otherwise lost — audit_logs
+  // is the permanent record here, not the operational requests row, same reasoning as the standalone
+  // reject() path's orphaned-request handling in requests.js).
+  const stillPending = await db.prepare(`SELECT id, type FROM requests WHERE commitment_id = ? AND status = 'pending'`).all(commitment.id);
+  for (const r of stillPending) {
+    await recordAudit({
+      tableName: 'requests', recordId: r.id, fieldName: 'resolved',
+      oldValue: null, newValue: `Auto-rejected — the task this ${r.type === 'support' ? 'support' : 'due-date-change'} request was about was deleted`,
+      changedBy: req.user.id, changedByName: req.user.full_name,
+    });
+  }
   await db.transaction(async () => {
-    await db.prepare(`
-      UPDATE requests SET status='rejected', resolved_by=?, resolved_at=datetime('now'), leader_note='Task was deleted.', updated_at=datetime('now')
-      WHERE commitment_id = ? AND status = 'pending'
-    `).run(req.user.id, commitment.id);
+    await db.prepare('DELETE FROM requests WHERE commitment_id = ?').run(commitment.id);
     await db.prepare('DELETE FROM commitments WHERE id = ?').run(commitment.id);
   });
   await recordAudit({

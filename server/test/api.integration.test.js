@@ -517,6 +517,87 @@ test('hierarchy — Dashboard: a Leader cannot view an unrelated employee\'s das
   assert.equal(allowed.status, 200);
 });
 
+test('hierarchy — Admin can act on any active employee, org-wide; an Employee cannot act on anyone else', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const adminEdit = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportATaskId}`, {
+    method: 'PATCH', headers: authed(adminLogin.token), body: JSON.stringify({ priority: 'Low' }),
+  });
+  assert.equal(adminEdit.status, 200, 'Admin must be able to act on any active employee, org-wide');
+
+  const { body: employeeLogin } = await login('employee@test.local', 'EmpPass123');
+  const employeeEdit = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportATaskId}`, {
+    method: 'PATCH', headers: authed(employeeLogin.token), body: JSON.stringify({ priority: 'Low' }),
+  });
+  assert.equal(employeeEdit.status, 403, 'a plain Employee must not be able to act on someone else\'s task');
+});
+
+test('hierarchy — canActOnEmployee refuses to act on a deactivated employee, even for their own manager', async () => {
+  const { body: superAdminLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const deactivate = await fetch(`${baseUrl}/api/users/${ids.reportAId}`, {
+    method: 'PATCH', headers: authed(superAdminLogin.token), body: JSON.stringify({ is_active: false }),
+  });
+  assert.equal(deactivate.status, 200);
+  try {
+    const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+    const editAttempt = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportATaskId}`, {
+      method: 'PATCH', headers: authed(midLeaderALogin.token), body: JSON.stringify({ priority: 'High' }),
+    });
+    assert.equal(editAttempt.status, 403, 'a Leader must not be able to edit a deactivated report\'s task, even one within their own chain');
+  } finally {
+    await fetch(`${baseUrl}/api/users/${ids.reportAId}`, {
+      method: 'PATCH', headers: authed(superAdminLogin.token), body: JSON.stringify({ is_active: true }),
+    });
+  }
+});
+
+test('users — assigning a manager that would create a reporting loop is rejected', async () => {
+  const { body: superAdminLogin } = await login('super@test.local', 'BrandNewPassword123');
+  // Top Leader already reports (indirectly) to nobody above Super Admin in this fixture; try to make
+  // Top Leader report to Mid Leader A, who already reports to Top Leader — a direct 2-node loop.
+  const res = await fetch(`${baseUrl}/api/users/${ids.topLeaderId}`, {
+    method: 'PATCH', headers: authed(superAdminLogin.token), body: JSON.stringify({ manager_id: ids.midLeaderAId }),
+  });
+  assert.equal(res.status, 400);
+  const { error } = await res.json();
+  assert.match(error, /loop/i);
+});
+
+// requests.commitment_id is NOT NULL with a plain REFERENCES (no ON DELETE clause, so Postgres defaults
+// to NO ACTION) — confirmed directly here rather than assumed, since it changes what's actually reachable
+// through the live app below.
+test('requests — deleting a task with a resolved request against it does not violate the commitment_id foreign key', async () => {
+  const { body: reportBLogin } = await login('reportb@test.local', 'ReportB123');
+  const requestRes = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportBTaskId}/request-due-date-change`, {
+    method: 'POST', headers: authed(reportBLogin.token), body: JSON.stringify({ requested_due_date: '2099-06-01' }),
+  });
+  assert.equal(requestRes.status, 201);
+  const { request } = await requestRes.json();
+
+  const { body: superAdminLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const approve = await fetch(`${baseUrl}/api/requests/${request.id}/approve`, { method: 'POST', headers: authed(superAdminLogin.token) });
+  assert.equal(approve.status, 200, 'the request must resolve cleanly before the delete attempt below');
+
+  const deleteTask = await fetch(`${baseUrl}/api/scrum/commitments/${ids.reportBTaskId}`, { method: 'DELETE', headers: authed(superAdminLogin.token) });
+  assert.equal(deleteTask.status, 200, 'deleting a task must not fail with an unhandled foreign-key error just because a resolved request once referenced it');
+});
+
+test('requests — deleting a task with a still-pending request against it leaves an audit trail for that request', async () => {
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const requestRes = await fetch(`${baseUrl}/api/scrum/commitments/${ids.midLeaderATaskId}/request-due-date-change`, {
+    method: 'POST', headers: authed(midLeaderALogin.token), body: JSON.stringify({ requested_due_date: '2099-07-01' }),
+  });
+  assert.equal(requestRes.status, 201);
+  const { request } = await requestRes.json();
+
+  const { body: superAdminLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const deleteTask = await fetch(`${baseUrl}/api/scrum/commitments/${ids.midLeaderATaskId}`, { method: 'DELETE', headers: authed(superAdminLogin.token) });
+  assert.equal(deleteTask.status, 200, 'deleting a task must not fail just because a request is still pending against it');
+
+  const auditRes = await fetch(`${baseUrl}/api/audit?table_name=requests&record_id=${request.id}`, { headers: authed(superAdminLogin.token) });
+  const { logs } = await auditRes.json();
+  assert.equal(logs.length, 1, 'the pending request must not just vanish — its auto-rejection needs a trace, like every other resolution in this flow');
+});
+
 test('import — tasks: a valid row succeeds, an unknown email fails, and a Leader cannot import a task for someone outside their reporting chain', async () => {
   const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
   const res = await fetch(`${baseUrl}/api/scrum/commitments/import`, {

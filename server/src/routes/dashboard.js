@@ -85,20 +85,20 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
   const teamCount = empIds.length && empIds[0] !== '__none__' ? empIds.length : 0;
   const scrumCompleted = (await db.prepare(`SELECT COUNT(*) c FROM scrum_sessions WHERE scrum_date=? AND status='completed' AND employee_id IN (${clause})`).get(date, ...empIds)).c;
 
-  const commitmentsToday = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE due_date=? AND employee_id IN (${clause})`).get(date, ...empIds)).c;
-  const completed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed' AND employee_id IN (${clause})`).get(...empIds)).c;
-  const pendingCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='pending' AND employee_id IN (${clause})`).get(...empIds)).c;
-  const inProgressCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='in_progress' AND employee_id IN (${clause})`).get(...empIds)).c;
-  const supportRequiredCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='support_required' AND employee_id IN (${clause})`).get(...empIds)).c;
-  const delayed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status != 'completed' AND due_date < ? AND employee_id IN (${clause})`).get(date, ...empIds)).c;
+  const commitmentsToday = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE due_date=? AND employee_id IN (${clause}) AND is_active=1`).get(date, ...empIds)).c;
+  const completed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
+  const pendingCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='pending' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
+  const inProgressCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='in_progress' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
+  const supportRequiredCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='support_required' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
+  const delayed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status != 'completed' AND due_date < ? AND employee_id IN (${clause}) AND is_active=1`).get(date, ...empIds)).c;
 
   // Due-so-far, not merely "left pending" — see the matching comment in GET /employee above.
-  const totalDue = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE due_date <= ? AND employee_id IN (${clause})`).get(date, ...empIds)).c;
-  const totalCompleted = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed' AND employee_id IN (${clause})`).get(...empIds)).c;
+  const totalDue = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE due_date <= ? AND employee_id IN (${clause}) AND is_active=1`).get(date, ...empIds)).c;
+  const totalCompleted = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
   const commitmentPct = totalDue ? Math.round((totalCompleted / totalDue) * 1000) / 10 : null;
 
-  const recurringCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='recurring' AND employee_id IN (${clause})`).get(...empIds)).c;
-  const adhocCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='adhoc' AND employee_id IN (${clause})`).get(...empIds)).c;
+  const recurringCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='recurring' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
+  const adhocCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='adhoc' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
   const totalWork = recurringCount + adhocCount;
 
   // Attention required
@@ -168,25 +168,32 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
   const teams = (await db.prepare(`SELECT COUNT(*) c FROM teams WHERE is_active=1`).get()).c;
 
   const totalEmployees = (await db.prepare(`SELECT COUNT(*) c FROM users WHERE role='employee' AND is_active=1`).get()).c;
-  const scrumCompleted = (await db.prepare(`SELECT COUNT(*) c FROM scrum_sessions WHERE scrum_date=? AND status='completed'`).get(date)).c;
+  // Numerator must count the same population as the denominator above — previously counted a completed
+  // scrum from ANY role, which could inflate this past 100% without those people being in totalEmployees.
+  const scrumCompleted = (await db.prepare(`
+    SELECT COUNT(*) c FROM scrum_sessions s JOIN users u ON u.id = s.employee_id
+    WHERE s.scrum_date=? AND s.status='completed' AND u.role='employee' AND u.is_active=1
+  `).get(date)).c;
 
-  const commitments = (await db.prepare(`SELECT COUNT(*) c FROM commitments`).get()).c;
+  const commitments = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE is_active=1`).get()).c;
   const actions = (await db.prepare(`SELECT COUNT(*) c FROM actions WHERE status != 'completed'`).get()).c;
   const escalations = (await db.prepare(`SELECT COUNT(*) c FROM escalations WHERE status='open'`).get()).c;
-  const supportRequired = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='support_required'`).get()).c;
-  const delayed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status != 'completed' AND due_date < ?`).get(date)).c;
-  const pendingCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='pending'`).get()).c;
-  const inProgressCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='in_progress'`).get()).c;
-  const completedCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed'`).get()).c;
+  const supportRequired = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='support_required' AND is_active=1`).get()).c;
+  const delayed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status != 'completed' AND due_date < ? AND is_active=1`).get(date)).c;
+  const pendingCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='pending' AND is_active=1`).get()).c;
+  const inProgressCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='in_progress' AND is_active=1`).get()).c;
+  const completedCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed' AND is_active=1`).get()).c;
 
-  const recurringCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='recurring'`).get()).c;
-  const adhocCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='adhoc'`).get()).c;
+  const recurringCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='recurring' AND is_active=1`).get()).c;
+  const adhocCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='adhoc' AND is_active=1`).get()).c;
   const totalWork = recurringCount + adhocCount;
 
+  // Same population as totalEmployees above (role='employee') — previously counted any active user with
+  // a team_id, so a team's own Leader was silently counted as one of "their" employees.
   const byTeam = await db.prepare(`
     SELECT t.name AS team_name, COUNT(DISTINCT u.id) AS employees
     FROM teams t
-    LEFT JOIN users u ON u.team_id = t.id AND u.is_active = 1
+    LEFT JOIN users u ON u.team_id = t.id AND u.is_active = 1 AND u.role = 'employee'
     WHERE t.is_active = 1 GROUP BY t.id ORDER BY t.name
   `).all();
 

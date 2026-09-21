@@ -129,6 +129,16 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
       changedBy: req.user.id, changedByName: req.user.full_name, reason: leaderNote,
       ownerId: commitment.employee_id, ownerName: await employeeName(commitment.employee_id),
     });
+  } else if (!commitment) {
+    // Orphaned request — its task was deleted after the request was raised, so there's nothing left to
+    // apply or return to In Progress. Only Admin/Super Admin ever reach this branch (a Leader already got
+    // a 403 above), but the resolution itself still needs a trace, same as every other outcome here —
+    // this was previously the one silent exception.
+    await recordAudit({
+      tableName: 'requests', recordId: request.id, fieldName: 'resolved',
+      oldValue: null, newValue: `Dismissed — the task this ${request.type === 'support' ? 'support' : 'due-date-change'} request was about no longer exists`,
+      changedBy: req.user.id, changedByName: req.user.full_name, reason: leaderNote,
+    });
   }
 
   await db.prepare(`UPDATE requests SET status='rejected', resolved_by=?, resolved_at=datetime('now'), leader_note=?, updated_at=datetime('now') WHERE id=?`)
