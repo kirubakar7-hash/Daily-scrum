@@ -295,3 +295,15 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** `npm run build` clean; confirmed every role key used in the app (`ROLES` in Admin.jsx) has a matching entry in the new color map. Not manually verified in the browser for the same reason as the hierarchy update above.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-22
+**Change:** A Team's "Leader" is no longer a separate, manually-picked field — it's now computed live from the real reporting chain (whichever active member manages the most other members of that same team). The Teams tab's Leader dropdown (create + per-row) became a read-only value; CSV import no longer asks for `leader_email`.
+**Reason:** Explicit request, after discussing plainly why Team Leader and Reports To were two separate settings that could drift apart — user chose having the app figure it out automatically over keeping two things to keep in sync by hand.
+**Files:** `server/src/routes/teams.js` (new `attachComputedLeaders()` helper; `assertValidLeader` and all `leader_user_id` reads/writes removed from GET/POST/PATCH/import; the field is dropped from the API response entirely, not just left unused), `server/src/routes/users.js` (removed the now-meaningless "a team they lead" delete-safety check — `manager_id`'s "people reporting to them" check already covers what actually matters), `client/src/pages/Admin.jsx` (Teams tab's Leader select replaced with a read-only computed value, plus a note pointing to Admin → Users' "Reports To" as where to actually change it).
+**Research before implementing:** ran a 2-agent discovery pass (backend + frontend) across the whole codebase first to confirm `leader_user_id` was never used in any permission/access-control decision anywhere — confirmed purely cosmetic (display + a data-integrity check on the value itself, never a gate on the actor) before touching it, so the switch carries no authorization risk.
+**Database:** No schema change — the `leader_user_id` column stays in place with whatever it last held; it's just never read or written by the app anymore. No migration needed since there's nothing broken to fix.
+**Tests:** New tests `import — teams: valid row succeeds, a duplicate name within the same file fails` (rewritten — the old leader_email-based version no longer applies) and `teams — a team's leader is computed from who most members report to, not a stored field` in `server/test/api.integration.test.js`. Full suite: 65/65 passing. `npm run build` clean.
+**Deployment:** Live.
+**Cost:** None.
