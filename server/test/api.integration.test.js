@@ -523,3 +523,29 @@ test('import — tasks: a valid row succeeds, an unknown email fails, and a Lead
   assert.ok(created, 'the successful row must have actually created a commitment');
   assert.equal(created.type, 'adhoc');
 });
+
+test('task history — records a "created" entry, is visible to the task\'s owner and anyone above them, and blocked for everyone else', async () => {
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: authed(midLeaderALogin.token),
+    body: JSON.stringify({ employee_id: ids.reportAId, description: 'Task with a history to check', type: 'adhoc' }),
+  });
+  assert.equal(createRes.status, 201);
+  const { commitment } = await createRes.json();
+
+  const asCreator = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/history`, { headers: authed(midLeaderALogin.token) });
+  assert.equal(asCreator.status, 200);
+  const { logs: creatorLogs } = await asCreator.json();
+  assert.equal(creatorLogs.length, 1, 'a freshly created task must have exactly one history entry so far');
+  assert.equal(creatorLogs[0].field_name, 'created');
+  assert.equal(creatorLogs[0].changed_by_name, 'Mid Leader A');
+  assert.equal(creatorLogs[0].owner_name, 'Report A');
+
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const asOwner = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/history`, { headers: authed(reportALogin.token) });
+  assert.equal(asOwner.status, 200, 'the task\'s own owner must always be able to view its history');
+
+  const { body: midLeaderBLogin } = await login('midleaderb@test.local', 'MidLeadB123');
+  const asUnrelated = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/history`, { headers: authed(midLeaderBLogin.token) });
+  assert.equal(asUnrelated.status, 403, 'a Leader outside this task\'s reporting chain must not see its history');
+});

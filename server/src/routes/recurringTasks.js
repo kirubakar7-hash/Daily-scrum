@@ -96,6 +96,11 @@ async function createRecurringTask(b, req) {
         changedBy: req.user.id, changedByName: req.user.full_name,
         ownerId: employeeId, ownerName: employee.full_name,
       });
+      await recordAudit({
+        tableName: 'commitments', recordId: commitmentId, fieldName: 'created', newValue: b.title.trim(),
+        changedBy: req.user.id, changedByName: req.user.full_name, reason: 'First occurrence of a new recurring series',
+        ownerId: employeeId, ownerName: employee.full_name,
+      });
       rows.push(await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(activityId));
     }
     return rows;

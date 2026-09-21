@@ -199,3 +199,15 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Verified live:** created 20 real sample tasks (4 each across Anudeep, Rajeshwari, Renuka, Shreenidhi, and Jeyant) directly through the live app to populate real hierarchy-scoped test data, confirmed they all landed correctly on Team Tasks ("20 of 20 tasks"), and walked one through its full lifecycle (Pending → In Progress → Completed → appears in History as TSK-000027).
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-21
+**Change:** Added a "View History" popout to every task row on Team Tasks/My Tasks/Daily Scrum — a clock icon opens a modal showing that one task's full trail (created, status changes, due-date changes, deletion) with a clear "Changed by {name}" on every entry and the task's permanent TSK-code shown at the top.
+**Reason:** Explicit request — the existing Audit Log page mixes every change across the whole system into one global feed; the user wanted to see one specific task's own history in isolation, the way clicking into a record shows its own detail.
+**Files:** `client/src/components/AuditTimeline.jsx` (new — extracted the formatting/rendering logic that used to live only inside `AuditLog.jsx`, so the org-wide log and the new per-task popout render identically and can never drift apart), `client/src/pages/AuditLog.jsx` (slimmed down to just fetch + render `<AuditTimeline>`), `client/src/components/TeamTaskList.jsx` (new History icon button per row, new `TaskHistoryModal`), `server/src/routes/scrum.js` (new `GET /api/scrum/commitments/:id/history`), `server/src/routes/recurringTasks.js`.
+**Security:** The new endpoint is scoped by the exact same view rule as everything else in the app (`assertCanView`) — a task's owner, or anyone above them in the reporting hierarchy, can see its history; nobody else can, including the global Audit Log's `super_admin`/`admin`-only restriction not applying here (this is a narrower, per-task view, not the sensitive org-wide feed).
+**Bug found and fixed while implementing:** task **creation** was never being written to the audit trail at all — `commitments.created_by`/`created_at` existed on the row itself, but no `audit_logs` entry recorded it, at any of the three places a task gets created (the single Create Task form, the new CSV import, and a recurring series' first occurrence in `recurringTasks.js`). Fixed all three, plus the auto-generated "next occurrence" a completed recurring task creates for itself — so a task's history now always starts with a real "created" entry instead of appearing to begin mid-story.
+**Tests:** New test `task history — records a "created" entry, is visible to the task's owner and anyone above them, and blocked for everyone else` in `server/test/api.integration.test.js`. Full suite: 59/59 passing.
+**Deployment:** Live.
+**Cost:** None.

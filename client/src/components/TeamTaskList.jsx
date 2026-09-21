@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy, CalendarClock } from 'lucide-react';
+import { Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy, CalendarClock, History as HistoryIcon } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { Badge, Button, DeleteButton, EmptyState, ErrorBanner, humanize, IllustrationEmptyList, IllustrationSearch, Input, Modal, Select, Skeleton, Textarea } from './ui';
 import RecurrencePicker, { DEFAULT_RULE } from './RecurrencePicker';
 import InfoTip from './InfoTip';
 import ImportButton from './ImportButton';
+import AuditTimeline from './AuditTimeline';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
 const EMPTY_TASK_FILTERS = { employee: '', type: '', priority: '', status: '', category: '', mainTask: '' };
@@ -34,6 +35,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState('');
   const [requestModal, setRequestModal] = useState(null); // { task, kind: 'support' | 'due_date_change' }
+  const [historyTask, setHistoryTask] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [employeeOptions, setEmployeeOptions] = useState([]);
   const [categoryOptions, setCategoryOptions] = useState([]);
@@ -207,6 +209,8 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
         />
       )}
 
+      {historyTask && <TaskHistoryModal task={historyTask} onClose={() => setHistoryTask(null)} />}
+
       <ErrorBanner message={deleteError} />
       {notice && (
         <div className="flex items-center gap-2 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2 text-sm mb-3 animate-scale-in">
@@ -377,6 +381,14 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                   </td>
                   <td className="py-2.5 pr-4">
                     <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        title="View history"
+                        onClick={() => setHistoryTask(t)}
+                        className="text-grey-400 hover:text-brand-600 transition-colors press-scale"
+                      >
+                        <HistoryIcon className="w-4 h-4" />
+                      </button>
                       {canRequest && (
                         <>
                           <button
@@ -751,6 +763,41 @@ function RequestModal({ task, kind, onClose, onSubmitted }) {
         )}
         <ErrorBanner message={error} />
         <Button onClick={submit} disabled={saving}>{saving ? 'Submitting…' : 'Submit Request'}</Button>
+      </div>
+    </Modal>
+  );
+}
+
+/** "View History" popout — every recorded change to this one task (created, status, due date, deletion,
+ *  etc.), each entry showing who did it and when. Reuses the exact same formatting as the org-wide Audit
+ *  Log page (AuditTimeline), just scoped to a single task via GET /commitments/:id/history. */
+function TaskHistoryModal({ task, onClose }) {
+  const [logs, setLogs] = useState(null);
+  const [error, setError] = useState('');
+  const code = task.seq ? `TSK-${String(task.seq).padStart(6, '0')}` : null;
+
+  useEffect(() => {
+    api.get(`/scrum/commitments/${task.id}/history`)
+      .then((d) => setLogs(d.logs))
+      .catch((e) => setError(e.message || "Couldn't load this task's history."));
+  }, [task.id]);
+
+  return (
+    <Modal open onClose={onClose} title="Task History">
+      <div className="space-y-3">
+        <div>
+          <p className="text-sm font-semibold text-grey-800">{task.description}</p>
+          {code && <p className="text-xs text-grey-400 font-mono mt-0.5">{code}</p>}
+        </div>
+        <ErrorBanner message={error} />
+        {!error && logs === null && (
+          <div className="space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        )}
+        {!error && logs !== null && (
+          <AuditTimeline logs={logs} emptyTitle="No history yet" emptyBody="Nothing recorded for this task yet." />
+        )}
       </div>
     </Modal>
   );

@@ -190,6 +190,11 @@ router.post('/commitments', asyncHandler(async (req, res) => {
     b.start_date || date, dueDate, dueDate, b.due_time || null, b.estimated_effort || null, b.dependency || null,
     b.dependency_owner || null, b.remarks || null, req.user.id, req.user.id
   );
+  await recordAudit({
+    tableName: 'commitments', recordId: id, fieldName: 'created', newValue: b.description.trim(),
+    changedBy: req.user.id, changedByName: req.user.full_name,
+    ownerId: employeeId, ownerName: await employeeName(employeeId),
+  });
 
   res.status(201).json({ commitment: await db.prepare('SELECT * FROM commitments WHERE id = ?').get(id) });
 }));
@@ -260,6 +265,11 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
           start_date, due_date, original_due_date, created_by, updated_by
         ) VALUES (?, ?, ?, ?, 'adhoc', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(id, employeeId, dueDate, description, task_type_id, category_id, main_task_id, priority, dueDate, dueDate, dueDate, req.user.id, req.user.id);
+      await recordAudit({
+        tableName: 'commitments', recordId: id, fieldName: 'created', newValue: description,
+        changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Bulk import',
+        ownerId: employeeId, ownerName: await employeeName(employeeId),
+      });
 
       results.push({ row: i + 1, success: true });
     } catch (e) {
@@ -422,6 +432,11 @@ router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
             await db.prepare('UPDATE recurring_activities SET occurrences_created = occurrences_created + 1 WHERE id = ?').run(activity.id);
           });
           nextTask = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(newId);
+          await recordAudit({
+            tableName: 'commitments', recordId: newId, fieldName: 'created', newValue: before.description,
+            changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Next occurrence of the recurring series',
+            ownerId: before.employee_id, ownerName: await employeeName(before.employee_id),
+          });
         }
       }
     }
@@ -429,6 +444,20 @@ router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
 
   const resolved = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(before.id);
   res.json({ commitment: withLateness(resolved), request, next_occurrence: nextTask, series_ended: seriesEnded });
+}));
+
+/** GET /api/scrum/commitments/:id/history — one task's full audit trail (created, status changes, due-date
+ *  changes, deletion, etc.), for the "View History" popout on Team Tasks. Scoped by the same view rule as
+ *  everything else — whoever can see the task (its owner, or someone above them in the hierarchy) can see
+ *  its history; nobody else can. */
+router.get('/commitments/:id/history', asyncHandler(async (req, res) => {
+  const commitment = await db.prepare('SELECT id, employee_id FROM commitments WHERE id = ?').get(req.params.id);
+  if (!commitment) return res.status(404).json({ error: 'Task not found.' });
+  if (!(await assertCanView(req, res, commitment.employee_id))) return;
+  const logs = await db.prepare(`
+    SELECT * FROM audit_logs WHERE table_name = 'commitments' AND record_id = ? ORDER BY changed_at DESC
+  `).all(req.params.id);
+  res.json({ logs });
 }));
 
 /** PATCH /api/scrum/commitments/:id — general edit (due date change etc.), keeps audit trail */
