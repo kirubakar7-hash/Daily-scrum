@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ClipboardList, Users, CheckCircle2, AlertTriangle, LifeBuoy, CalendarClock, Inbox, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
+import { ClipboardList, Users, CheckCircle2, AlertTriangle, LifeBuoy, CalendarClock, Inbox, ChevronLeft, ChevronRight, CalendarDays, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Skeleton } from '../components/ui';
@@ -25,6 +25,7 @@ export default function TeamToday() {
   // YYYY-MM-DD string the date input already produces, straight through to the API).
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [view, setView] = useState('Day'); // 'Day' | 'Month' — Team Overview only
+  const [search, setSearch] = useState('');
   const readOnly = user.role === 'senior_management';
   const canReachAdmin = user.role === 'admin' || user.role === 'super_admin';
 
@@ -48,6 +49,9 @@ export default function TeamToday() {
   }
 
   const totalDelayed = team.reduce((sum, r) => sum + r.delayed, 0);
+  const filteredTeam = search.trim()
+    ? team.filter((r) => r.full_name?.toLowerCase().includes(search.trim().toLowerCase()))
+    : team;
 
   return (
     <div className="space-y-4">
@@ -113,6 +117,19 @@ export default function TeamToday() {
         ))}
       </div>
 
+      {tab === 'Team Overview' && (
+        <div className="relative w-full sm:w-64 animate-fade-in-up">
+          <Search className="w-3.5 h-3.5 text-grey-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search team member…"
+            className="w-full rounded-xl border border-grey-300 pl-8 pr-3 py-1.5 text-sm text-grey-900 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
+          />
+        </div>
+      )}
+
       {tab === 'Team Overview' && view === 'Day' && (
         <Card className="animate-fade-in-up">
           <HelpBanner>
@@ -127,6 +144,10 @@ export default function TeamToday() {
                 ? 'Set the "Reports To" field for employees under Admin → Users to build out your team.'
                 : 'No employees are set to report to you yet.'}
             </EmptyState>
+          ) : filteredTeam.length === 0 ? (
+            <EmptyState icon={<IllustrationTeam className="w-16 h-16 mx-auto" />} title="No one matches that search">
+              Try a different name, or clear the search box above.
+            </EmptyState>
           ) : (
             <div className="overflow-x-auto mt-2">
               <table className="w-full text-sm">
@@ -140,7 +161,7 @@ export default function TeamToday() {
                   </tr>
                 </thead>
                 <tbody>
-                  {team.map((row, i) => (
+                  {filteredTeam.map((row, i) => (
                     <tr key={row.employee_id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
                       <td className="py-2.5 pr-4">
                         <div className="flex items-center gap-2.5">
@@ -152,7 +173,12 @@ export default function TeamToday() {
                       </td>
                       <td className="py-2 pr-4 text-right">
                         {row.scrum_status === 'completed'
-                          ? <span className="inline-flex items-center gap-1 text-emerald-600 font-semibold"><CheckCircle2 className="w-3.5 h-3.5" /> Done</span>
+                          ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-600 font-semibold">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Done
+                              {row.scrum_completed_at && <span className="text-grey-400 font-normal">· {row.scrum_completed_at.slice(11, 16)}</span>}
+                            </span>
+                          )
                           : <span className="text-grey-400">Pending</span>}
                       </td>
                       <td className="py-2 pr-4 text-right text-grey-700">{row.today_work_count}</td>
@@ -179,7 +205,9 @@ export default function TeamToday() {
         </Card>
       )}
 
-      {tab === 'Team Overview' && view === 'Month' && <TeamMonthGrid />}
+      {tab === 'Team Overview' && view === 'Month' && <TeamMonthGrid search={search} />}
+
+      {tab === 'Team Overview' && <SupportReasonsPanel />}
 
       {tab === 'Team Tasks' && (
         <Card className="animate-fade-in-up">
@@ -213,7 +241,7 @@ function shiftMonth(monthStr, delta) {
  *  "one status per person per day" once more than one person is involved — unlike a single person's own
  *  month, which reads fine as a wrapped 7-day calendar, a team's doesn't: there's nowhere to put six
  *  people's status in one day-cell without a matrix). */
-function TeamMonthGrid() {
+function TeamMonthGrid({ search }) {
   const [month, setMonth] = useState(todayStr.slice(0, 7));
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -223,6 +251,10 @@ function TeamMonthGrid() {
     api.get(`/leader/team-month?month=${month}`).then(setData).catch((e) => setLoadError(e.message || "Couldn't load the month."));
   }
   useEffect(() => { load(); }, [month]);
+
+  const filteredRows = data && search?.trim()
+    ? data.team.filter((r) => r.full_name?.toLowerCase().includes(search.trim().toLowerCase()))
+    : data?.team;
 
   return (
     <Card className="animate-fade-in-up">
@@ -258,6 +290,10 @@ function TeamMonthGrid() {
         <EmptyState icon={<IllustrationTeam className="w-16 h-16 mx-auto" />} title="No team members assigned yet">
           Nothing to show here until someone reports to you.
         </EmptyState>
+      ) : filteredRows.length === 0 ? (
+        <EmptyState icon={<IllustrationTeam className="w-16 h-16 mx-auto" />} title="No one matches that search">
+          Try a different name, or clear the search box above.
+        </EmptyState>
       ) : (
         <div className="overflow-x-auto">
           <table className="text-sm border-separate" style={{ borderSpacing: '2px' }}>
@@ -271,24 +307,26 @@ function TeamMonthGrid() {
                   // parseDate() does. Missing that shifted every weekday label here by one whole month.
                   const [dYear, dMonth, dDay] = d.split('-').map(Number);
                   const weekday = new Date(Date.UTC(dYear, dMonth - 1, dDay)).getUTCDay();
+                  const isToday = d === todayStr;
                   return (
-                    <th key={d} className="w-7 text-center text-[10px] font-medium text-grey-400 leading-tight">
+                    <th key={d} className={`w-7 text-center text-[10px] font-medium leading-tight ${isToday ? 'text-brand-700 bg-brand-50 rounded-t-lg' : 'text-grey-400'}`}>
                       <div>{WEEKDAY_INITIALS[weekday]}</div>
-                      <div className="text-grey-600 font-semibold">{dayNum}</div>
+                      <div className={isToday ? 'font-bold' : 'text-grey-600 font-semibold'}>{dayNum}</div>
                     </th>
                   );
                 })}
               </tr>
             </thead>
             <tbody>
-              {data.team.map((row) => (
+              {filteredRows.map((row) => (
                 <tr key={row.employee_id}>
                   <td className="pr-4 py-1 font-semibold text-grey-800 whitespace-nowrap sticky left-0 bg-white">{row.full_name}</td>
                   {data.days.map((d) => {
                     const status = row.statuses[d];
                     const isFuture = d > todayStr;
+                    const isToday = d === todayStr;
                     return (
-                      <td key={d} className="text-center py-1">
+                      <td key={d} className={`text-center py-1 ${isToday ? 'bg-brand-50' : ''}`}>
                         {isFuture ? (
                           <span className="inline-block w-4 h-4 rounded-full bg-grey-50" title="Not yet due" />
                         ) : status === 'completed' ? (
@@ -312,6 +350,52 @@ function TeamMonthGrid() {
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+/** Who currently needs help, and why, in their own words — reuses /leader/team-tasks (the same data Team
+ *  Tasks already fetches) rather than a new endpoint, filtered down to tasks flagged Support Required.
+ *  The reason/explanation shown here is always the real text the employee typed when they flagged it
+ *  (non_completion_reason/non_completion_explanation on the commitment itself) — never invented. */
+function SupportReasonsPanel() {
+  const [tasks, setTasks] = useState(null);
+  const [loadError, setLoadError] = useState('');
+
+  function load() {
+    setLoadError('');
+    api.get('/leader/team-tasks').then((d) => setTasks(d.tasks)).catch((e) => setLoadError(e.message || "Couldn't load support requests."));
+  }
+  useEffect(load, []);
+
+  if (!tasks) {
+    if (loadError) return <Card className="animate-fade-in-up"><ErrorBanner message={loadError} /><Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button></Card>;
+    return null; // quiet while loading — this is a secondary panel, not worth its own skeleton flash
+  }
+
+  const needsHelp = tasks.filter((t) => t.status === 'support_required');
+  if (needsHelp.length === 0) return null; // nothing to say when no one's blocked — no empty-state noise needed
+
+  return (
+    <Card className="animate-fade-in-up">
+      <h2 className="font-bold text-grey-900 mb-1 flex items-center gap-2">
+        <LifeBuoy className="w-4 h-4 text-amber-600" /> Support Needed
+      </h2>
+      <p className="text-xs text-grey-400 mb-3">
+        {needsHelp.length} task{needsHelp.length === 1 ? '' : 's'} currently flagged, in the employee's own words.
+      </p>
+      <div className="grid sm:grid-cols-2 gap-2.5">
+        {needsHelp.map((t) => (
+          <div key={t.id} className="border border-amber-200 bg-amber-50/50 rounded-xl p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-grey-800">{t.employee_name}</span>
+              {t.non_completion_reason && <Badge tone="support_required">{t.non_completion_reason}</Badge>}
+            </div>
+            <p className="text-sm text-grey-700 mt-1">{t.description}</p>
+            {t.non_completion_explanation && <p className="text-xs text-grey-500 mt-1">{t.non_completion_explanation}</p>}
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }

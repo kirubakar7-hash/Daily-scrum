@@ -49,8 +49,8 @@ router.get('/team-today', requireRole('super_admin', 'admin', 'leader', 'senior_
   `).all(date, date, ...ids);
   const countsByEmployee = Object.fromEntries(counts.map((c) => [c.employee_id, c]));
 
-  const sessions = await db.prepare(`SELECT employee_id, status FROM scrum_sessions WHERE scrum_date = ? AND employee_id IN (${clause})`).all(date, ...ids);
-  const sessionByEmployee = Object.fromEntries(sessions.map((s) => [s.employee_id, s.status]));
+  const sessions = await db.prepare(`SELECT employee_id, status, completed_at FROM scrum_sessions WHERE scrum_date = ? AND employee_id IN (${clause})`).all(date, ...ids);
+  const sessionByEmployee = Object.fromEntries(sessions.map((s) => [s.employee_id, s]));
 
   const rows = employees.map((emp) => ({
     employee_id: emp.id,
@@ -59,7 +59,8 @@ router.get('/team-today', requireRole('super_admin', 'admin', 'leader', 'senior_
     today_work_count: countsByEmployee[emp.id]?.today_work_count || 0,
     delayed: countsByEmployee[emp.id]?.delayed || 0,
     support_required: countsByEmployee[emp.id]?.support_required || 0,
-    scrum_status: sessionByEmployee[emp.id] || 'pending',
+    scrum_status: sessionByEmployee[emp.id]?.status || 'pending',
+    scrum_completed_at: sessionByEmployee[emp.id]?.completed_at || null,
   }));
 
   res.json({ date, team: rows });

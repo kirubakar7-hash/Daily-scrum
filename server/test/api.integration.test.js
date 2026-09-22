@@ -188,6 +188,7 @@ test('scrum — confirming your own scrum shows up as "completed" on your leader
   const { team } = await teamToday.json();
   const reportARow = team.find((t) => t.employee_id === ids.reportAId);
   assert.equal(reportARow.scrum_status, 'completed', 'the leader\'s Team Today must reflect the report\'s confirmed scrum for today');
+  assert.match(reportARow.scrum_completed_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/, 'must return the real confirmation timestamp, not just the status');
 });
 
 test('scrum — an employee cannot edit another employee\'s task; a leader can', async () => {
