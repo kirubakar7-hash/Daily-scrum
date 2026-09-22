@@ -288,6 +288,42 @@ test('users — an admin can change a user\'s email, but not to one already in u
   });
 });
 
+// An Admin (not Super Admin) minting their own Super Admin account was a real, confirmed privilege-
+// escalation path: requireRole('super_admin','admin') let an Admin through to POST/PATCH /api/users, and
+// the only role-related guard (is_super_admin_protected) only protects the one designated account, not
+// the super_admin role itself.
+test('users — an Admin cannot create a new user with role=super_admin', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const res = await fetch(`${baseUrl}/api/users`, {
+    method: 'POST', headers: authed(adminLogin.token),
+    body: JSON.stringify({ full_name: 'Sneaky Admin', email: 'sneaky-super@test.local', password: 'SneakyPass123', role: 'super_admin' }),
+  });
+  assert.equal(res.status, 403);
+  const found = await db.prepare('SELECT id FROM users WHERE lower(email) = ?').get('sneaky-super@test.local');
+  assert.equal(found, undefined, 'no super_admin row must have been created');
+});
+
+test('users — an Admin cannot promote an existing ordinary user to role=super_admin', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const res = await fetch(`${baseUrl}/api/users/${ids.employeeId}`, {
+    method: 'PATCH', headers: authed(adminLogin.token), body: JSON.stringify({ role: 'super_admin' }),
+  });
+  assert.equal(res.status, 403);
+  const after = await db.prepare('SELECT role FROM users WHERE id = ?').get(ids.employeeId);
+  assert.equal(after.role, 'employee', 'the target\'s role must be completely unchanged after a rejected promotion attempt');
+});
+
+test('users — a real Super Admin can still create and promote to super_admin (the guard is role-based, not a blanket ban)', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const created = await fetch(`${baseUrl}/api/users`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ full_name: 'Second Super Admin', email: 'second-super@test.local', password: 'SecondSuper123', role: 'super_admin' }),
+  });
+  assert.equal(created.status, 201, 'a genuine Super Admin must still be able to create another Super Admin account');
+  const { user } = await created.json();
+  assert.equal(user.role, 'super_admin');
+});
+
 test('dashboard — an employee cannot view another employee\'s personal dashboard via employee_id', async () => {
   const { body: empLogin } = await login('employee@test.local', 'EmpPass123');
   const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
@@ -902,6 +938,63 @@ test('import — tasks: a valid row succeeds, an unknown email fails, and a Lead
   assert.equal(created.type, 'adhoc');
 });
 
+// The single-create routes for Process/Activity/Task all refuse an inactive parent with a friendly error
+// — the CSV import routes resolved names against an unfiltered (active-and-inactive) list and inserted
+// straight through with no re-check, silently bypassing that rule. These confirm the fix on all three.
+test('import — a Process cannot be bulk-imported under a deactivated Function', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const inactiveCategoryId = uuid();
+  await db.prepare(`INSERT INTO categories (id, name, is_active, created_by) VALUES (?, ?, 0, ?)`).run(inactiveCategoryId, 'Deactivated Test Function', ids.superAdminId);
+
+  const res = await fetch(`${baseUrl}/api/main-tasks/import`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ rows: [{ name: 'Should Not Be Created', category_name: 'Deactivated Test Function' }] }),
+  });
+  assert.equal(res.status, 200);
+  const { results } = await res.json();
+  assert.equal(results[0].success, false, 'importing a Process against a deactivated Function must fail');
+  assert.match(results[0].error, /no longer available/i);
+  const created = await db.prepare('SELECT id FROM main_tasks WHERE name = ?').get('Should Not Be Created');
+  assert.equal(created, undefined, 'no Process row must have been created');
+});
+
+test('import — an Activity cannot be bulk-imported under a deactivated Process', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const inactiveMainTaskId = uuid();
+  await db.prepare(`INSERT INTO main_tasks (id, name, category_id, is_active, created_by) VALUES (?, ?, ?, 0, ?)`)
+    .run(inactiveMainTaskId, 'Deactivated Test Process', ids.fixtureCategoryId, ids.superAdminId);
+
+  const res = await fetch(`${baseUrl}/api/task-activities/import`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ rows: [{ name: 'Should Not Be Created', main_task_name: 'Deactivated Test Process' }] }),
+  });
+  assert.equal(res.status, 200);
+  const { results } = await res.json();
+  assert.equal(results[0].success, false, 'importing an Activity against a deactivated Process must fail');
+  assert.match(results[0].error, /no longer available/i);
+  const created = await db.prepare('SELECT id FROM task_activities WHERE name = ?').get('Should Not Be Created');
+  assert.equal(created, undefined, 'no Activity row must have been created');
+});
+
+test('import — a Task cannot be bulk-imported against a deactivated Function, Process, or Activity', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const inactiveCategoryId = uuid();
+  await db.prepare(`INSERT INTO categories (id, name, is_active, created_by) VALUES (?, ?, 0, ?)`).run(inactiveCategoryId, 'Deactivated Task Function', ids.superAdminId);
+
+  const res = await fetch(`${baseUrl}/api/scrum/commitments/import`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({ rows: [
+      { employee_email: 'reporta@test.local', description: 'Should not be created', category_name: 'Deactivated Task Function', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
+    ] }),
+  });
+  assert.equal(res.status, 200);
+  const { results } = await res.json();
+  assert.equal(results[0].success, false, 'importing a task against a deactivated Function must fail, not silently attach to it');
+  assert.match(results[0].error, /no longer available/i);
+  const created = await db.prepare('SELECT id FROM commitments WHERE description = ?').get('Should not be created');
+  assert.equal(created, undefined, 'no commitment row must have been created');
+});
+
 test('task history — records a "created" entry, is visible to the task\'s owner and anyone above them, and blocked for everyone else', async () => {
   const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
   const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
@@ -1142,6 +1235,53 @@ test('recurring generation — a race between two callers inserting the same occ
 
   const after = await db.prepare('SELECT occurrences_created FROM recurring_activities WHERE id = ?').get(activityId);
   assert.equal(after.occurrences_created, 2, 'the loser of the race must not still bump the counter for a row it didn\'t actually create');
+});
+
+// The completion-triggered path (an employee marking today's occurrence done, via POST .../resolve) is a
+// second way a recurring series advances, alongside the schedule-triggered sweep tested above — it had no
+// integration test at all before this.
+test('scrum resolve — completing a recurring task lines up its next occurrence', async () => {
+  const { activityId, commitmentId } = await seedRecurringSeries({
+    rule: { interval: 1, unit: 'day', end: { type: 'never' } },
+    lastDueDate: today(),
+  });
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+
+  const res = await fetch(`${baseUrl}/api/scrum/commitments/${commitmentId}/resolve`, {
+    method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({ status: 'completed' }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.series_ended, false, 'a "never"-ending series must not be marked ended just because one occurrence was completed');
+  assert.ok(body.next_occurrence, 'completing today\'s occurrence must line up the next one, not leave the series stalled until the schedule sweep runs');
+  assert.equal(body.next_occurrence.due_date, daysAgo(-1), 'a daily series\' next occurrence must be due tomorrow');
+
+  const rows = await db.prepare('SELECT * FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId);
+  assert.equal(rows.length, 2, 'exactly the completed occurrence plus its one new successor — not a duplicate or none at all');
+  const activity = await db.prepare('SELECT occurrences_created FROM recurring_activities WHERE id = ?').get(activityId);
+  assert.equal(activity.occurrences_created, 2, 'occurrences_created must be bumped for the newly-created next occurrence');
+});
+
+test('scrum resolve — completing the final occurrence of a count-limited series ends it, without creating another', async () => {
+  const { activityId, commitmentId } = await seedRecurringSeries({
+    rule: { interval: 1, unit: 'day', end: { type: 'after_count', count: 1 } },
+    occurrencesCreated: 1,
+    lastDueDate: today(),
+  });
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+
+  const res = await fetch(`${baseUrl}/api/scrum/commitments/${commitmentId}/resolve`, {
+    method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({ status: 'completed' }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.series_ended, true, 'completing the one-and-only allowed occurrence must end the series');
+  assert.equal(body.next_occurrence, null, 'a series that just ended must not also get a next occurrence created for it');
+
+  const activity = await db.prepare('SELECT is_active FROM recurring_activities WHERE id = ?').get(activityId);
+  assert.equal(activity.is_active, 0, 'the series must be deactivated in the same request that completes its final occurrence');
+  const count = await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId);
+  assert.equal(count.c, 1, 'no occurrence beyond the series\' own end condition should ever be created, on this path either');
 });
 
 test('cron — /api/cron/generate-recurring refuses every request without the right shared secret, even a valid user login', async () => {

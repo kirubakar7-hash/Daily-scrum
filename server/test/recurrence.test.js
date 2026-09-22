@@ -61,6 +61,35 @@ test('nextOccurrence — monthly clamps to the last day of the month when the or
   assert.equal(nextOccurrence('2026-01-31', activity), '2026-02-28');
 });
 
+test('nextOccurrence — monthly clamps to Feb 29 in a leap year, not Feb 28', () => {
+  const activity = { recurrence_rule: JSON.stringify({ interval: 1, unit: 'month', end: { type: 'never' } }), occurrences_created: 1 };
+  // 2028 is a leap year — Jan 31 + 1 month must clamp to the real last day of February, Feb 29.
+  assert.equal(nextOccurrence('2028-01-31', activity), '2028-02-29');
+});
+
+test('nextOccurrence — monthly clamps back down from Feb 29 once the following year is not a leap year', () => {
+  const activity = { recurrence_rule: JSON.stringify({ interval: 12, unit: 'month', end: { type: 'never' } }), occurrences_created: 1 };
+  // A series anchored on Feb 29 (a leap day) jumping 12 months lands in a non-leap February, which has
+  // no 29th — must clamp to Feb 28, not overflow into March.
+  assert.equal(nextOccurrence('2028-02-29', activity), '2029-02-28');
+});
+
+test('nextOccurrence — weekly with an interval greater than 1 jumps whole OFF weeks, not just to the next selected weekday', () => {
+  const activity = {
+    recurrence_rule: JSON.stringify({ interval: 2, unit: 'week', weekdays: [1, 3], end: { type: 'never' } }),
+    series_start_date: '2026-09-07', occurrences_created: 1,
+  };
+  // Anchor week (containing 09-07, a Monday): Mon 09-07 -> Wed 09-09 stays in the anchor week, same as
+  // interval=1 would. The real interval>1 behavior only shows up on the NEXT jump: from Wed 09-09, the
+  // following selected weekday (Monday) must skip an entire off-week and land 2 weeks after the anchor
+  // week (09-21), not just 1 week out — proving the anchor-based math (not naive "+7 days") is what runs.
+  assert.equal(nextOccurrence('2026-09-07', activity), '2026-09-09');
+  assert.equal(nextOccurrence('2026-09-09', activity), '2026-09-21');
+  // And it keeps that same 2-week cadence going forward, without drifting.
+  assert.equal(nextOccurrence('2026-09-21', activity), '2026-09-23');
+  assert.equal(nextOccurrence('2026-09-23', activity), '2026-10-05');
+});
+
 test('nextOccurrence — returns null once an on_date end condition has passed, so the series stops', () => {
   const activity = {
     recurrence_rule: JSON.stringify({ interval: 1, unit: 'day', end: { type: 'on_date', date: '2026-09-10' } }),
