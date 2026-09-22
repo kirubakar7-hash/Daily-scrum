@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import './db.js';
+import { resolveCorsOrigin } from './lib/corsConfig.js';
 
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
@@ -25,19 +26,17 @@ import cronRoutes from './routes/cron.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Refusing to start with wide-open CORS in production mirrors the JWT_SECRET check below — cheap
-// insurance against shipping the wide-open dev default to a publicly reachable deploy by accident.
-if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGIN) {
-  console.error('Refusing to start: set a real CORS_ORIGIN environment variable before running in production.');
-  process.exit(1);
-}
-
 const app = express();
-// CORS_ORIGIN lets a production deploy lock this down to its real domain (comma-separated for more than
-// one). Left unset, this stays wide-open — fine for local dev, and harmless once frontend+backend share
-// one origin (this same server serves the built frontend below), since same-origin calls don't need CORS.
-const corsOrigin = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) : true;
-app.use(cors({ origin: corsOrigin }));
+// See lib/corsConfig.js for the full reasoning — in short, this app's supported production deployment
+// (Vercel) is single-origin, so CORS_ORIGIN being unset is a valid, safe configuration there (same-origin
+// requests never go through CORS at all), not something that should block startup or fall back to a
+// wide-open policy.
+if (process.env.CORS_ORIGIN) {
+  console.log(`CORS restricted to: ${process.env.CORS_ORIGIN}`);
+} else if (process.env.NODE_ENV === 'production') {
+  console.log('CORS_ORIGIN not set — same-origin requests only (the supported Vercel deployment); cross-origin API calls are refused.');
+}
+app.use(cors({ origin: resolveCorsOrigin(process.env.CORS_ORIGIN, process.env.NODE_ENV) }));
 app.use(express.json());
 
 // Minimal request logging so a production error can be matched back to the request that caused it —

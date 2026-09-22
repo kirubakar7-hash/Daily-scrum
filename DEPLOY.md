@@ -1,5 +1,12 @@
 # Putting Daily Scrum Monitoring online, 24/7
 
+> **This app's real production deployment today is Vercel + Neon Postgres** (`https://daily-scrum-one.vercel.app`),
+> not Fly.io — see `vercel.json` and `api/index.js`. Everything below this note describes the original
+> Fly.io path and is kept for reference/an alternative hosting option, but doesn't reflect where the live
+> app actually runs. Vercel needs no separate deploy walkthrough: pushing to `main` auto-deploys, and the
+> only manual step is setting `DATABASE_URL`, `JWT_SECRET`, `NODE_ENV=production`, and `CRON_SECRET` as
+> real environment variables in the Vercel project's settings (`.env.example` documents each one).
+
 This walks through moving the app from "runs on my computer while Claude has it open" to
 "has its own permanent web address, stays on by itself." It uses **Fly.io** — a small
 hosting service that runs your app in the cloud and keeps it running.
@@ -129,4 +136,6 @@ from this folder again. Your data on the volume is untouched by a redeploy.
   environment variables instead of being hardcoded — `DB_PATH`, `PORT`, `JWT_SECRET`,
   `CORS_ORIGIN` (see `.env.example` for what each one does).
 - The server refuses to start in production if `JWT_SECRET` is still the local-dev
-  placeholder, so this can't accidentally go live insecurely.
+  placeholder, so this can't accidentally go live insecurely. `CORS_ORIGIN` is different: it's
+  only relevant if the frontend is ever split onto a separate domain from the API, so it's
+  optional even in production (see `.env.example`).
