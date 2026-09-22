@@ -14,7 +14,7 @@ router.use(requireAuth);
  *  person, or members who don't manage each other) simply has no computed leader. This intentionally
  *  ignores a member's manager outside the team — a team's leader must be someone the team can see leading
  *  it, not just whoever happens to be someone's boss elsewhere in the org. */
-async function attachComputedLeaders(teams) {
+export async function attachComputedLeaders(teams) {
   const users = await db.prepare('SELECT id, full_name, team_id, manager_id FROM users WHERE is_active = 1').all();
   const byTeam = new Map();
   for (const u of users) {

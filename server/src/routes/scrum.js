@@ -557,36 +557,6 @@ router.patch('/actions/:id', asyncHandler(async (req, res) => {
   res.json({ action: await db.prepare('SELECT * FROM actions WHERE id = ?').get(before.id) });
 }));
 
-/** POST /api/scrum/escalations */
-router.post('/escalations', asyncHandler(async (req, res) => {
-  const employeeId = targetEmployeeId(req);
-  if (!(await assertCanEdit(req, res, employeeId))) return;
-  if (!(await assertEmployeeExists(res, employeeId))) return;
-  const b = req.body || {};
-  if (!b.issue || !b.issue.trim()) return res.status(400).json({ error: 'Please describe the issue being escalated.' });
-  const id = uuid();
-  await db.prepare(`
-    INSERT INTO escalations (id, issue, employee_id, activity_id, escalated_by, escalated_to, required_action, target_resolution_date, created_by, updated_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id, b.issue.trim(), employeeId, b.activity_id || null, req.user.full_name,
-    b.escalated_to || null, b.required_action || null, b.target_resolution_date || null, req.user.id, req.user.id
-  );
-  res.status(201).json({ escalation: await db.prepare('SELECT * FROM escalations WHERE id = ?').get(id) });
-}));
-
-router.patch('/escalations/:id', asyncHandler(async (req, res) => {
-  const before = await db.prepare('SELECT * FROM escalations WHERE id = ?').get(req.params.id);
-  if (!before) return res.status(404).json({ error: 'Escalation not found.' });
-  if (!(await assertCanEdit(req, res, before.employee_id))) return;
-  const status = req.body?.status || before.status;
-  const resolutionDate = status === 'resolved' ? new Date().toISOString() : before.resolution_date;
-  await db.prepare(`UPDATE escalations SET status=?, resolution_date=?, resolution_remarks=?, updated_at=datetime('now'), updated_by=? WHERE id=?`)
-    .run(status, resolutionDate, req.body?.resolution_remarks ?? before.resolution_remarks, req.user.id, before.id);
-  await auditDiff({ tableName: 'escalations', recordId: before.id, before, after: { status }, changedBy: req.user.id, changedByName: req.user.full_name });
-  res.json({ escalation: await db.prepare('SELECT * FROM escalations WHERE id = ?').get(before.id) });
-}));
-
 /** POST /api/scrum/confirm — Step 5, confirm today's commitments */
 router.post('/confirm', asyncHandler(async (req, res) => {
   const employeeId = targetEmployeeId(req);

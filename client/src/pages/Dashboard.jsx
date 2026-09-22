@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Users, UsersRound, CheckCircle2, Clock, LifeBuoy, ListTodo,
-  MessageSquareWarning, Repeat, Zap, ClipboardList, Bell, TrendingUp,
+  Repeat, Zap, ClipboardList, Bell, TrendingUp,
   Target, Mail,
 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -132,6 +132,8 @@ function OrgDashboard({ data, role }) {
   const sub = role === 'super_admin'
     ? 'Full visibility and control across every team, user, and record.'
     : 'A read-only view of how the organization is performing today.';
+  const attn = data.attention_required;
+  const hasOrgAttention = attn && Object.values(attn).some((arr) => arr.length > 0);
   return (
     <div className="space-y-3">
       <div className="animate-fade-in-up">
@@ -142,6 +144,21 @@ function OrgDashboard({ data, role }) {
         This screen rolls up every team's Daily Scrum into organization-wide numbers, calculated live from the database — nothing here is hard-coded.
         Drill down via <strong>Admin</strong> (manage users and teams) or <strong>Daily Scrum</strong> / <strong>History</strong> for the detail behind any number.
       </HelpBanner>
+
+      {/* Same "bottlenecks first" placement as the Leader dashboard — the one thing a 2-minute visit
+          should answer first is "what, specifically, needs my attention," not a pile of totals. */}
+      <Card dense className="animate-fade-in-up">
+        <h2 className="font-bold text-accent-700 mb-1 flex items-center gap-2"><Bell className="w-4 h-4" /> Needs Attention, Org-Wide</h2>
+        <p className="text-xs text-grey-400 mb-2">These signals just mean "worth a look" — not a judgment on anyone's performance.</p>
+        {!hasOrgAttention && <EmptyState icon={<IllustrationSuccess className="w-16 h-16 mx-auto animate-pop-in" />} title="All clear">Nothing needs urgent attention right now.</EmptyState>}
+        {attn?.support_requests.length > 0 && (
+          <AttentionGroup icon={LifeBuoy} tone="accent" title="Support Requested" items={attn.support_requests.map((c) => `${c.full_name} — ${c.description}${c.non_completion_explanation ? `: "${c.non_completion_explanation}"` : ''}`)} />
+        )}
+        {attn?.delayed_commitments.length > 0 && (
+          <AttentionGroup icon={Clock} tone="accent" title="Delayed Tasks" items={attn.delayed_commitments.map((c) => `${c.full_name} — ${c.description} (${c.delay_days} day${c.delay_days === 1 ? '' : 's'} delayed)`)} />
+        )}
+      </Card>
+
       {role === 'super_admin' && <StatusEmailButton />}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <KpiCard dense className="animate-fade-in-up" style={rowDelay(0)} icon={<Users className="w-4 h-4" />} label="Active Users" value={data.active_users} to="/admin" tone="brand" />
@@ -164,18 +181,23 @@ function OrgDashboard({ data, role }) {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1">Team</th><th className="text-right">Employees</th></tr></thead>
+                <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1">Team</th><th>Leader</th><th className="text-right">Scrum Today</th></tr></thead>
                 <tbody>
                   {data.by_team.map((t, i) => (
                     <tr key={t.team_name} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={rowDelay(i)}>
                       <td className="py-1.5 font-semibold text-grey-800">{t.team_name}</td>
-                      <td className="text-right text-grey-700">{t.employees}</td>
+                      <td className="text-grey-600">{t.leader_name || <span className="text-grey-300">—</span>}</td>
+                      <td className="text-right text-grey-700">{t.scrum_completed}/{t.employees}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <BarList tone="brand" items={data.by_team.map((t) => ({ label: t.team_name, value: t.employees }))} />
+            <BarList
+              tone="brand"
+              max={100}
+              items={data.by_team.map((t) => ({ label: t.team_name, value: t.employees ? Math.round((t.scrum_completed / t.employees) * 100) : 0 }))}
+            />
           </div>
         )}
       </Card>
@@ -216,10 +238,7 @@ function LeaderDashboard({ data, role }) {
           <AttentionGroup icon={Clock} tone="accent" title="Delayed Tasks" items={attn.delayed_commitments.map((c) => `${c.full_name} — ${c.description} (${c.delay_days} day${c.delay_days === 1 ? '' : 's'} delayed)`)} />
         )}
         {attn.repeated_support_requests.length > 0 && (
-          <AttentionGroup icon={Repeat} tone="brand" title="Repeated Support Requests" items={attn.repeated_support_requests.map((c) => `${c.description} — requested support ${c.c} times`)} />
-        )}
-        {attn.open_escalations.length > 0 && (
-          <AttentionGroup icon={MessageSquareWarning} tone="accent" title="Open Escalations" items={attn.open_escalations.map((e) => `${e.full_name} — ${e.issue}`)} />
+          <AttentionGroup icon={Repeat} tone="brand" title="Repeated Support Requests" items={attn.repeated_support_requests.map((c) => `${c.full_name} — ${c.description} (asked for help ${c.cnt} times)`)} />
         )}
         {attn.high_adhoc_workload.length > 0 && (
           <AttentionGroup icon={Zap} tone="amber" title="High Ad-hoc Workload" items={attn.high_adhoc_workload.map((e) => `${e.full_name} — ${Math.round((e.adhoc_count / e.total_count) * 100)}% ad-hoc`)} />

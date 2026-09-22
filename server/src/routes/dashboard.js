@@ -7,6 +7,7 @@ import { buildStatusEmail } from '../lib/statusEmail.js';
 import { sendMail, mailIsConfigured, stakeholderRecipients } from '../lib/mail.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { subordinateIds } from '../lib/scope.js';
+import { attachComputedLeaders } from './teams.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -114,16 +115,18 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
     ORDER BY c.updated_at DESC LIMIT 20
   `).all(...empIds);
 
-  // Scoped to the last 30 days so someone who struggled once, long ago, doesn't stay flagged forever.
+  // Counted from the requests table (every time support was ASKED for), not the commitment's current
+  // status — a commitment flips back to in_progress/completed the moment its request is resolved, so
+  // counting current status only ever catches someone with 2+ requests open at once, which is rare. This
+  // catches the real pattern: flagged, resolved, flagged again. requests rows are never cleared on
+  // resolution, and (since a task's requests are removed together with it on delete) every remaining row
+  // here always has a live commitment to join against. Scoped to the last 30 days so someone who
+  // struggled once, long ago, doesn't stay flagged forever.
   const repeatedSupportRequests = await db.prepare(`
-    SELECT description, employee_id, COUNT(*) c FROM commitments
-    WHERE status='support_required' AND employee_id IN (${clause}) AND created_at >= datetime('now', '-30 days')
-    GROUP BY employee_id, description HAVING COUNT(*) >= 2 ORDER BY c DESC LIMIT 10
-  `).all(...empIds);
-
-  const openEscalations = await db.prepare(`
-    SELECT e.*, u.full_name FROM escalations e JOIN users u ON u.id = e.employee_id
-    WHERE e.status='open' AND e.employee_id IN (${clause}) ORDER BY e.escalation_date LIMIT 20
+    SELECT c.employee_id, u.full_name, c.description, COUNT(*) cnt
+    FROM requests r JOIN commitments c ON c.id = r.commitment_id JOIN users u ON u.id = c.employee_id
+    WHERE r.type='support' AND c.employee_id IN (${clause}) AND r.created_at >= datetime('now', '-30 days')
+    GROUP BY c.employee_id, u.full_name, c.description HAVING COUNT(*) >= 2 ORDER BY cnt DESC LIMIT 10
   `).all(...empIds);
 
   // Same 30-day scoping as repeatedSupportRequests above — this is meant to reflect current workload,
@@ -155,7 +158,6 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
       delayed_commitments: delayedList,
       support_requests: supportRequests,
       repeated_support_requests: repeatedSupportRequests,
-      open_escalations: openEscalations,
       high_adhoc_workload: highAdhocEmployees,
     },
   });
@@ -177,7 +179,6 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
 
   const commitments = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE is_active=1`).get()).c;
   const actions = (await db.prepare(`SELECT COUNT(*) c FROM actions WHERE status != 'completed'`).get()).c;
-  const escalations = (await db.prepare(`SELECT COUNT(*) c FROM escalations WHERE status='open'`).get()).c;
   const supportRequired = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='support_required' AND is_active=1`).get()).c;
   const delayed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status != 'completed' AND due_date < ? AND is_active=1`).get(date)).c;
   const pendingCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='pending' AND is_active=1`).get()).c;
@@ -188,13 +189,44 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
   const adhocCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='adhoc' AND is_active=1`).get()).c;
   const totalWork = recurringCount + adhocCount;
 
-  // Same population as totalEmployees above (role='employee') — previously counted any active user with
-  // a team_id, so a team's own Leader was silently counted as one of "their" employees.
-  const byTeam = await db.prepare(`
-    SELECT t.name AS team_name, COUNT(DISTINCT u.id) AS employees
-    FROM teams t
-    LEFT JOIN users u ON u.team_id = t.id AND u.is_active = 1 AND u.role = 'employee'
-    WHERE t.is_active = 1 GROUP BY t.id ORDER BY t.name
+  // A bare headcount told a viewer nothing they didn't already know by name for a team this size — this
+  // now surfaces the one thing "By Team" should actually answer: who's confirmed today, and who leads
+  // each team (reusing the same computed-leader logic teams.js's own Teams tab already uses, so the two
+  // screens can never show a different leader for the same team).
+  const teamsRaw = await db.prepare(`SELECT * FROM teams WHERE is_active = 1 ORDER BY name`).all();
+  const teamsWithLeaders = await attachComputedLeaders(teamsRaw);
+  const teamMembers = await db.prepare(`SELECT id, team_id FROM users WHERE is_active = 1 AND team_id IS NOT NULL`).all();
+  const memberIdsByTeam = new Map();
+  for (const m of teamMembers) {
+    if (!memberIdsByTeam.has(m.team_id)) memberIdsByTeam.set(m.team_id, []);
+    memberIdsByTeam.get(m.team_id).push(m.id);
+  }
+  const confirmedTodaySet = new Set(
+    (await db.prepare(`SELECT employee_id FROM scrum_sessions WHERE scrum_date=? AND status='completed'`).all(date)).map((r) => r.employee_id)
+  );
+  const byTeam = teamsWithLeaders.map((t) => {
+    const memberIds = memberIdsByTeam.get(t.id) || [];
+    return {
+      team_name: t.name,
+      leader_name: t.leader_name,
+      employees: memberIds.length,
+      scrum_completed: memberIds.filter((id) => confirmedTodaySet.has(id)).length,
+    };
+  });
+
+  // Same shape as GET /leader's own "attention_required" block below, just org-wide instead of scoped to
+  // one reporting chain — Super Admin/Senior Management previously got bare aggregate counts here with no
+  // way to see WHO needed help or WHY without clicking through to History and reading rows by hand.
+  const orgDelayedList = (await db.prepare(`
+    SELECT c.*, u.full_name FROM commitments c JOIN users u ON u.id = c.employee_id
+    WHERE c.status != 'completed' AND c.due_date < ? AND c.is_active = 1
+    ORDER BY c.due_date LIMIT 20
+  `).all(date)).map((r) => withDelay(r, date));
+
+  const orgSupportRequests = await db.prepare(`
+    SELECT c.*, u.full_name FROM commitments c JOIN users u ON u.id = c.employee_id
+    WHERE c.status='support_required' AND c.is_active = 1
+    ORDER BY c.updated_at DESC LIMIT 20
   `).all();
 
   res.json({
@@ -206,7 +238,6 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
     scrum_pending: Math.max(totalEmployees - scrumCompleted, 0),
     commitments,
     actions,
-    escalations,
     support_required: supportRequired,
     delayed,
     pending: pendingCount,
@@ -215,6 +246,10 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
     recurring_pct: totalWork ? Math.round((recurringCount / totalWork) * 1000) / 10 : null,
     adhoc_pct: totalWork ? Math.round((adhocCount / totalWork) * 1000) / 10 : null,
     by_team: byTeam,
+    attention_required: {
+      delayed_commitments: orgDelayedList,
+      support_requests: orgSupportRequests,
+    },
   });
 }));
 

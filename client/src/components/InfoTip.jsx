@@ -25,10 +25,6 @@ export const GLOSSARY = {
     title: 'What is priority?',
     body: 'How urgent this is relative to your other work — High, Medium, or Low.',
   },
-  escalation: {
-    title: 'What is escalation?',
-    body: "Asking a leader to step in because normal follow-up hasn't resolved the issue.",
-  },
   recoveryAction: {
     title: 'What is a recovery action?',
     body: "What you plan to do to get this back on track, now that it's late.",
