@@ -74,9 +74,15 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
     });
   } else {
     await db.prepare(`UPDATE commitments SET status='in_progress', updated_at=datetime('now'), updated_by=? WHERE id=?`).run(req.user.id, commitment.id);
+    // A distinct fieldName from reject's below — both used to write the identical {fieldName:'status',
+    // oldValue: status, newValue:'in_progress'} entry, making an approved Support request indistinguishable
+    // from a rejected one in the task's own History drawer. The original ask (what they actually needed
+    // help with) is folded into newValue here too, since it's still on the commitment at this point but
+    // isn't guaranteed to stay there — this keeps the record self-contained either way.
     await recordAudit({
-      tableName: 'commitments', recordId: commitment.id, fieldName: 'status',
-      oldValue: commitment.status, newValue: 'in_progress',
+      tableName: 'commitments', recordId: commitment.id, fieldName: 'support_request_approved',
+      oldValue: commitment.non_completion_reason || null,
+      newValue: leaderNote || commitment.non_completion_explanation || 'Approved',
       changedBy: req.user.id, changedByName: req.user.full_name, reason: leaderNote,
       ownerId, ownerName,
     });
@@ -113,9 +119,13 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
   if (commitment && request.type === 'support') {
     const ownerId = commitment.employee_id;
     await db.prepare(`UPDATE commitments SET status='in_progress', updated_at=datetime('now'), updated_by=? WHERE id=?`).run(req.user.id, commitment.id);
+    // See the matching comment on the approve handler above — 'support_request_rejected' keeps this
+    // outcome distinguishable from an approval in the task's History drawer, instead of both writing the
+    // same {fieldName:'status', ..., newValue:'in_progress'} entry.
     await recordAudit({
-      tableName: 'commitments', recordId: commitment.id, fieldName: 'status',
-      oldValue: commitment.status, newValue: 'in_progress',
+      tableName: 'commitments', recordId: commitment.id, fieldName: 'support_request_rejected',
+      oldValue: commitment.non_completion_reason || null,
+      newValue: leaderNote || 'Rejected — returned to In Progress',
       changedBy: req.user.id, changedByName: req.user.full_name, reason: leaderNote,
       ownerId, ownerName: await employeeName(ownerId),
     });

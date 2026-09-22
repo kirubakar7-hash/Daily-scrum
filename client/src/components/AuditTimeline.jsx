@@ -1,4 +1,4 @@
-import { Pencil, Trash2, Plus, Mail, CalendarClock } from 'lucide-react';
+import { Pencil, Trash2, Plus, Mail, CalendarClock, LifeBuoy } from 'lucide-react';
 import { EmptyState, IllustrationEmptyList, Timeline, humanize } from './ui';
 
 const SUBJECT_LABELS = {
@@ -33,6 +33,8 @@ function describeLog(l) {
   // Amber, not brand — matches the due-date cell's own "amber means changed from the original" convention.
   if (l.field_name === 'carried_forward') return { icon: CalendarClock, tone: 'amber', title: `${subject} due date changed`, detail: { from: l.old_value, to: l.new_value } };
   if (l.field_name === 'due_date_change_rejected') return { icon: CalendarClock, tone: 'accent', title: `${subject} due-date-change request rejected`, detail: `stayed at ${l.old_value}` };
+  if (l.field_name === 'support_request_approved') return { icon: LifeBuoy, tone: 'success', title: 'Support request approved', detail: l.new_value };
+  if (l.field_name === 'support_request_rejected') return { icon: LifeBuoy, tone: 'accent', title: 'Support request rejected', detail: l.new_value };
   if (l.field_name === 'assigned') return { icon: Plus, tone: 'brand', title: 'Recurring task assigned', detail: l.new_value };
   if (l.field_name === 'is_active') return { icon: Pencil, tone: l.new_value === '1' ? 'success' : 'accent', title: `${subject} ${l.new_value === '1' ? 'activated' : 'deactivated'}`, detail: null };
 
