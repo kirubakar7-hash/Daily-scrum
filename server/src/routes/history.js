@@ -42,6 +42,7 @@ function buildCommitmentFilter(req) {
   if (req.query.priority) { clause += ' AND priority = ?'; params.push(req.query.priority); }
   if (req.query.category_id) { clause += ' AND category_id = ?'; params.push(req.query.category_id); }
   if (req.query.main_task_id) { clause += ' AND main_task_id = ?'; params.push(req.query.main_task_id); }
+  if (req.query.task_activity_id) { clause += ' AND task_activity_id = ?'; params.push(req.query.task_activity_id); }
   return { clause, params };
 }
 
@@ -64,6 +65,7 @@ router.get('/commitments', asyncHandler(async (req, res) => {
   if (req.query.priority) { whereExtra += ' AND c.priority = ?'; params.push(req.query.priority); }
   if (req.query.category_id) { whereExtra += ' AND c.category_id = ?'; params.push(req.query.category_id); }
   if (req.query.main_task_id) { whereExtra += ' AND c.main_task_id = ?'; params.push(req.query.main_task_id); }
+  if (req.query.task_activity_id) { whereExtra += ' AND c.task_activity_id = ?'; params.push(req.query.task_activity_id); }
 
   const fromWhere = `
     FROM commitments c
@@ -71,6 +73,7 @@ router.get('/commitments', asyncHandler(async (req, res) => {
     LEFT JOIN task_types t ON t.id = c.task_type_id
     LEFT JOIN categories cat ON cat.id = c.category_id
     LEFT JOIN main_tasks mt ON mt.id = c.main_task_id
+    LEFT JOIN task_activities ta ON ta.id = c.task_activity_id
     WHERE c.employee_id IN (${clause})${whereExtra}
   `;
 
@@ -78,7 +81,7 @@ router.get('/commitments', asyncHandler(async (req, res) => {
   // separate COUNT(*) against the same WHERE clause, same truncated-flag shape search.js already returns.
   const total = (await db.prepare(`SELECT COUNT(*) c ${fromWhere}`).get(...params)).c;
   const rows = (await db.prepare(`
-    SELECT c.*, u.full_name, t.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name,
+    SELECT c.*, u.full_name, t.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name,
       EXISTS(SELECT 1 FROM requests r WHERE r.commitment_id = c.id AND r.type = 'support') AS had_support_request
     ${fromWhere}
     ORDER BY c.scrum_date DESC, c.created_at DESC LIMIT 500
@@ -151,18 +154,22 @@ router.get('/export.csv', asyncHandler(async (req, res) => {
   const params = [...employeeIds, ...filterParams];
   let sql = `
     SELECT c.seq, c.scrum_date, u.full_name, c.description, c.type, t.name AS task_type_name,
-           cat.name AS category_name, mt.name AS main_task_name, c.priority, c.status, c.due_date, c.completed_at, c.non_completion_reason
+           cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name, c.priority, c.status, c.due_date, c.completed_at, c.non_completion_reason
     FROM commitments c
     JOIN users u ON u.id = c.employee_id
     LEFT JOIN task_types t ON t.id = c.task_type_id
     LEFT JOIN categories cat ON cat.id = c.category_id
     LEFT JOIN main_tasks mt ON mt.id = c.main_task_id
+    LEFT JOIN task_activities ta ON ta.id = c.task_activity_id
     WHERE c.employee_id IN (${clause})${filterClause}
     ORDER BY c.scrum_date DESC
   `;
   const rows = await db.prepare(sql).all(...params);
 
-  const header = ['Code', 'Date', 'Employee', 'Activity', 'Type', 'Task Type', 'Subtask', 'Main Task', 'Priority', 'Status', 'Due Date', 'Completed At', 'Reason If Not Completed'];
+  // 'Activity' (below) already means the task's own free-text description, a name this export has used
+  // since before the Activity master-data entity existed — 'Activity Type' avoids the two meaning
+  // different things in the same header row.
+  const header = ['Code', 'Date', 'Employee', 'Activity', 'Type', 'Task Type', 'Subtask', 'Main Task', 'Activity Type', 'Priority', 'Status', 'Due Date', 'Completed At', 'Reason If Not Completed'];
   // Guards against spreadsheet formula injection: a cell value starting with =, +, -, or @ is treated as
   // a formula by Excel/Sheets when the file is opened. Any employee can type free text into a task
   // description, so this file is the one place that text leaves React's safe rendering and lands
@@ -176,7 +183,7 @@ router.get('/export.csv', asyncHandler(async (req, res) => {
     rows.map((r) => {
       const code = `TSK-${String(r.seq).padStart(6, '0')}`;
       const taskType = r.task_type_name || (r.type === 'recurring' ? 'Recurring' : 'Ad-hoc');
-      return [code, r.scrum_date, r.full_name, r.description, r.type, taskType, r.category_name || '', r.main_task_name || '', r.priority, r.status, r.due_date, r.completed_at || '', r.non_completion_reason].map(escape).join(',');
+      return [code, r.scrum_date, r.full_name, r.description, r.type, taskType, r.category_name || '', r.main_task_name || '', r.task_activity_name || '', r.priority, r.status, r.due_date, r.completed_at || '', r.non_completion_reason].map(escape).join(',');
     })
   );
   res.set('Content-Type', 'text/csv');

@@ -99,13 +99,14 @@ router.get('/today', asyncHandler(async (req, res) => {
 router.get('/my-tasks', asyncHandler(async (req, res) => {
   const date = req.query.date || today();
   const rows = await db.prepare(`
-    SELECT c.*, u.full_name AS employee_name, ra.frequency AS recurring_frequency, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name
+    SELECT c.*, u.full_name AS employee_name, ra.frequency AS recurring_frequency, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name
     FROM commitments c
     JOIN users u ON u.id = c.employee_id
     LEFT JOIN recurring_activities ra ON ra.id = c.recurring_activity_id
     LEFT JOIN task_types tt ON tt.id = c.task_type_id
     LEFT JOIN categories cat ON cat.id = c.category_id
     LEFT JOIN main_tasks mt ON mt.id = c.main_task_id
+    LEFT JOIN task_activities ta ON ta.id = c.task_activity_id
     WHERE c.employee_id = ? AND c.is_active = 1 AND c.status != 'completed'
     ORDER BY c.due_date, c.created_at DESC
   `).all(req.user.id);
@@ -151,6 +152,14 @@ router.post('/commitments', asyncHandler(async (req, res) => {
     if (!chosenMainTask) return res.status(400).json({ error: 'That Main Task is no longer available. Choose another.' });
   }
 
+  // Activity sits one level under Main Task (Main Task "FP&A" → Activity "Rolling forecast updates") —
+  // same optional/independent treatment as Category and Main Task.
+  let taskActivityId = b.task_activity_id || null;
+  if (taskActivityId) {
+    const chosenActivity = await db.prepare('SELECT id FROM task_activities WHERE id = ? AND is_active = 1').get(taskActivityId);
+    if (!chosenActivity) return res.status(400).json({ error: 'That Activity is no longer available. Choose another.' });
+  }
+
   // The recurrence rule can arrive as a full { interval, unit, weekdays, end } object (the calendar-style
   // picker), or — for backward compatibility with older clients — as one of the original fixed frequency
   // strings, which maps onto an equivalent rule.
@@ -172,9 +181,9 @@ router.post('/commitments', asyncHandler(async (req, res) => {
       recurringActivityId = uuid();
       const seriesStart = b.due_date || b.scrum_date || today();
       await db.prepare(`
-        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, priority, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(recurringActivityId, employeeId, b.description.trim(), describeRule(rule), JSON.stringify(rule), seriesStart, taskTypeId, categoryId, mainTaskId, b.priority || 'Medium', req.user.id);
+        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, task_activity_id, priority, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(recurringActivityId, employeeId, b.description.trim(), describeRule(rule), JSON.stringify(rule), seriesStart, taskTypeId, categoryId, mainTaskId, taskActivityId, b.priority || 'Medium', req.user.id);
     }
   }
 
@@ -183,11 +192,11 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   const dueDate = b.due_date || date;
   await db.prepare(`
     INSERT INTO commitments (
-      id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, priority, expected_outcome,
+      id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, priority, expected_outcome,
       start_date, due_date, original_due_date, due_time, estimated_effort, dependency, dependency_owner, remarks, created_by, updated_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    id, employeeId, date, b.description.trim(), type, recurringActivityId, taskTypeId, categoryId, mainTaskId, b.priority || 'Medium', b.expected_outcome || null,
+    id, employeeId, date, b.description.trim(), type, recurringActivityId, taskTypeId, categoryId, mainTaskId, taskActivityId, b.priority || 'Medium', b.expected_outcome || null,
     b.start_date || date, dueDate, dueDate, b.due_time || null, b.estimated_effort || null, b.dependency || null,
     b.dependency_owner || null, b.remarks || null, req.user.id, req.user.id
   );
@@ -215,6 +224,8 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
   const categoryByName = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c.id]));
   const mainTasks = await db.prepare('SELECT id, name FROM main_tasks').all();
   const mainTaskByName = new Map(mainTasks.map((m) => [m.name.trim().toLowerCase(), m.id]));
+  const activities = await db.prepare('SELECT id, name FROM task_activities').all();
+  const activityByName = new Map(activities.map((a) => [a.name.trim().toLowerCase(), a.id]));
   const results = [];
 
   for (let i = 0; i < rows.length; i++) {
@@ -254,6 +265,13 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
         if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found.`);
       }
 
+      let task_activity_id = null;
+      const activityName = (r.activity_name || '').trim();
+      if (activityName) {
+        task_activity_id = activityByName.get(activityName.toLowerCase());
+        if (!task_activity_id) throw new Error(`Activity "${activityName}" was not found.`);
+      }
+
       const priority = (r.priority || '').trim() || 'Medium';
       if (!['Low', 'Medium', 'High'].includes(priority)) throw new Error('priority must be Low, Medium, or High.');
 
@@ -262,10 +280,10 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       const id = uuid();
       await db.prepare(`
         INSERT INTO commitments (
-          id, employee_id, scrum_date, description, type, task_type_id, category_id, main_task_id, priority,
+          id, employee_id, scrum_date, description, type, task_type_id, category_id, main_task_id, task_activity_id, priority,
           start_date, due_date, original_due_date, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, 'adhoc', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, employeeId, dueDate, description, task_type_id, category_id, main_task_id, priority, dueDate, dueDate, dueDate, req.user.id, req.user.id);
+        ) VALUES (?, ?, ?, ?, 'adhoc', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, employeeId, dueDate, description, task_type_id, category_id, main_task_id, task_activity_id, priority, dueDate, dueDate, dueDate, req.user.id, req.user.id);
       await recordAudit({
         tableName: 'commitments', recordId: id, fieldName: 'created', newValue: description,
         changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Bulk import',

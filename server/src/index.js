@@ -19,6 +19,7 @@ import taskTypeRoutes from './routes/taskTypes.js';
 import recurringTaskRoutes from './routes/recurringTasks.js';
 import categoryRoutes from './routes/categories.js';
 import mainTaskRoutes from './routes/mainTasks.js';
+import taskActivityRoutes from './routes/taskActivities.js';
 import requestRoutes from './routes/requests.js';
 import cronRoutes from './routes/cron.js';
 
@@ -65,6 +66,7 @@ app.use('/api/task-types', taskTypeRoutes);
 app.use('/api/recurring-tasks', recurringTaskRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/main-tasks', mainTaskRoutes);
+app.use('/api/task-activities', taskActivityRoutes);
 app.use('/api/requests', requestRoutes);
 app.use('/api/cron', cronRoutes);
 

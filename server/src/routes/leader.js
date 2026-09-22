@@ -110,13 +110,14 @@ async function openTasksForEmployees(ids, date) {
   // Once a task is Completed it no longer needs anyone's attention here — it drops off this list
   // (still fully visible in History, nothing is hidden from the record, just from this working view).
   const rows = await db.prepare(`
-    SELECT c.*, u.full_name AS employee_name, ra.frequency AS recurring_frequency, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name
+    SELECT c.*, u.full_name AS employee_name, ra.frequency AS recurring_frequency, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name
     FROM commitments c
     JOIN users u ON u.id = c.employee_id
     LEFT JOIN recurring_activities ra ON ra.id = c.recurring_activity_id
     LEFT JOIN task_types tt ON tt.id = c.task_type_id
     LEFT JOIN categories cat ON cat.id = c.category_id
     LEFT JOIN main_tasks mt ON mt.id = c.main_task_id
+    LEFT JOIN task_activities ta ON ta.id = c.task_activity_id
     WHERE c.employee_id IN (${clause}) AND c.is_active = 1 AND c.status != 'completed'
     ORDER BY c.due_date, c.created_at DESC
   `).all(...ids);

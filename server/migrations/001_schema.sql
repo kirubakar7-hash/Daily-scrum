@@ -56,6 +56,24 @@ CREATE TABLE IF NOT EXISTS main_tasks (
   updated_by TEXT
 );
 
+-- One level below Main Task — e.g. Main Task "FP&A" contains Activities like "Rolling forecast updates"
+-- or "Budget vs Actual variance analysis". Picking one on a task form auto-fills the task's free-text
+-- Description (still editable), so a standard, recurring piece of work doesn't need retyping each time.
+-- Named "task_activities", not "activities" — this codebase already uses "activity"/"activities" heavily
+-- for the unrelated recurring_activities table (a recurring task's own template row); a bare "activities"
+-- table here would collide with that everywhere in code, audit table_name values, and conversation.
+CREATE TABLE IF NOT EXISTS task_activities (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  main_task_id TEXT REFERENCES main_tasks(id),
+  description TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT now_utc(),
+  updated_at TEXT NOT NULL DEFAULT now_utc(),
+  created_by TEXT,
+  updated_by TEXT
+);
+
 CREATE TABLE IF NOT EXISTS teams (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -124,6 +142,7 @@ CREATE TABLE IF NOT EXISTS recurring_activities (
   task_type_id TEXT REFERENCES task_types(id),
   category_id TEXT REFERENCES categories(id),
   main_task_id TEXT REFERENCES main_tasks(id),
+  task_activity_id TEXT REFERENCES task_activities(id),
   priority TEXT NOT NULL DEFAULT 'Medium',
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT now_utc(),
@@ -171,7 +190,8 @@ CREATE TABLE IF NOT EXISTS commitments (
   updated_by TEXT,
   task_type_id TEXT REFERENCES task_types(id),
   category_id TEXT REFERENCES categories(id),
-  main_task_id TEXT REFERENCES main_tasks(id)
+  main_task_id TEXT REFERENCES main_tasks(id),
+  task_activity_id TEXT REFERENCES task_activities(id)
 );
 
 CREATE TABLE IF NOT EXISTS requests (
@@ -265,6 +285,8 @@ CREATE INDEX IF NOT EXISTS idx_requests_resolved_by ON requests(resolved_by);
 CREATE INDEX IF NOT EXISTS idx_audit_changed_at ON audit_logs(changed_at);
 CREATE INDEX IF NOT EXISTS idx_commitments_main_task ON commitments(main_task_id);
 CREATE INDEX IF NOT EXISTS idx_main_tasks_category ON main_tasks(category_id);
+CREATE INDEX IF NOT EXISTS idx_commitments_task_activity ON commitments(task_activity_id);
+CREATE INDEX IF NOT EXISTS idx_task_activities_main_task ON task_activities(main_task_id);
 
 -- Seed the two protected task types the app's recurrence engine and dashboard split rely on — every
 -- installation needs at least one active type per mechanic, so these can be renamed but not deleted.

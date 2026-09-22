@@ -14,12 +14,13 @@ router.use(requireRole('super_admin', 'admin'));
  *  per employee it's assigned to (the data model ties each recurring activity to one employee). */
 router.get('/', asyncHandler(async (req, res) => {
   const rows = await db.prepare(`
-    SELECT ra.*, u.full_name AS employee_name, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name
+    SELECT ra.*, u.full_name AS employee_name, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name
     FROM recurring_activities ra
     JOIN users u ON u.id = ra.employee_id
     LEFT JOIN task_types tt ON tt.id = ra.task_type_id
     LEFT JOIN categories cat ON cat.id = ra.category_id
     LEFT JOIN main_tasks mt ON mt.id = ra.main_task_id
+    LEFT JOIN task_activities ta ON ta.id = ra.task_activity_id
     ORDER BY ra.is_active DESC, ra.title, u.full_name
   `).all();
   res.json({ recurring_tasks: rows });
@@ -64,6 +65,12 @@ async function createRecurringTask(b, req) {
     if (!mainTask) throw new Error('That Main Task is no longer available. Choose another.');
   }
 
+  let taskActivityId = b.task_activity_id || null;
+  if (taskActivityId) {
+    const activity = await db.prepare('SELECT id FROM task_activities WHERE id = ? AND is_active = 1').get(taskActivityId);
+    if (!activity) throw new Error('That Activity is no longer available. Choose another.');
+  }
+
   // The seed occurrence's due date snaps forward to the rule's own weekday selection, so a series
   // started on a day outside that selection doesn't have an out-of-pattern first due date.
   const dueDate = firstDueDate(startDate, rule);
@@ -76,18 +83,18 @@ async function createRecurringTask(b, req) {
 
       const activityId = uuid();
       await db.prepare(`
-        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, priority, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(activityId, employeeId, b.title.trim(), describeRule(rule), JSON.stringify(rule), startDate, taskTypeId, categoryId, mainTaskId, priority, req.user.id);
+        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, task_activity_id, priority, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(activityId, employeeId, b.title.trim(), describeRule(rule), JSON.stringify(rule), startDate, taskTypeId, categoryId, mainTaskId, taskActivityId, priority, req.user.id);
 
       const commitmentId = uuid();
       await db.prepare(`
         INSERT INTO commitments (
-          id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, priority,
+          id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, priority,
           start_date, due_date, original_due_date, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        commitmentId, employeeId, startDate, b.title.trim(), mechanic, activityId, taskTypeId, categoryId, mainTaskId, priority,
+        commitmentId, employeeId, startDate, b.title.trim(), mechanic, activityId, taskTypeId, categoryId, mainTaskId, taskActivityId, priority,
         startDate, dueDate, dueDate, req.user.id, req.user.id
       );
 
@@ -134,6 +141,8 @@ router.post('/import', asyncHandler(async (req, res) => {
   const categoryByName = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c.id]));
   const mainTasks = await db.prepare('SELECT id, name FROM main_tasks').all();
   const mainTaskByName = new Map(mainTasks.map((m) => [m.name.trim().toLowerCase(), m.id]));
+  const activities = await db.prepare('SELECT id, name FROM task_activities').all();
+  const activityByName = new Map(activities.map((a) => [a.name.trim().toLowerCase(), a.id]));
   const results = [];
 
   for (let i = 0; i < rows.length; i++) {
@@ -162,6 +171,12 @@ router.post('/import', asyncHandler(async (req, res) => {
         main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
         if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found.`);
       }
+      let task_activity_id = null;
+      const activityName = (r.activity_name || '').trim();
+      if (activityName) {
+        task_activity_id = activityByName.get(activityName.toLowerCase());
+        if (!task_activity_id) throw new Error(`Activity "${activityName}" was not found.`);
+      }
 
       const created = await createRecurringTask({
         title: r.title,
@@ -169,6 +184,7 @@ router.post('/import', asyncHandler(async (req, res) => {
         task_type_id,
         category_id,
         main_task_id,
+        task_activity_id,
         priority: (r.priority || '').trim() || undefined,
         start_date: (r.start_date || '').trim() || undefined,
         frequency: (r.frequency || '').trim() || undefined,
