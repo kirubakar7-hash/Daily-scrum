@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Users, UsersRound, Tag, Tags, Repeat, Plus, Check, UserPlus, ListTree, ListChecks } from 'lucide-react';
 import { api } from '../lib/api';
 import { badgeClassFor, Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
@@ -1074,10 +1074,16 @@ function RecurringTasksTab() {
 
   // Picking an Activity fills in the title automatically (still editable) so a standard, recurring piece
   // of work doesn't need retyping — matches the same convention as the ad-hoc Create Task form.
+  // Switching to a different Activity updates the title again as long as it's still exactly what the
+  // last Activity auto-filled; the moment someone types their own edit, autoFilledTitle.current no
+  // longer matches and their text is left alone. Same logic as CreateTaskForm's own selectActivity.
+  const autoFilledTitle = useRef(null);
   function selectActivity(id) {
     setTaskActivityId(id);
     const activity = taskActivities.find((a) => a.id === id);
-    if (activity) setTitle((t) => t.trim() ? t : activity.name);
+    if (!activity) return;
+    setTitle((t) => (!t.trim() || t === autoFilledTitle.current) ? activity.name : t);
+    autoFilledTitle.current = activity.name;
   }
 
   function toggleEmployee(id) {
