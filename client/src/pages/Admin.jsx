@@ -306,9 +306,13 @@ function MainTasksTab() {
   function load() {
     setLoadError('');
     api.get('/main-tasks').then((d) => setItems(d.main_tasks)).catch((e) => setLoadError(e.message || "Couldn't load Processes."));
-    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
+    // Unfiltered — the inline per-row Function select below needs to resolve a Process's CURRENT
+    // Function even if that Function has since been deactivated, or the select shows blank/wrong
+    // instead of the real linked name. The create-form only offers activeCategories (below).
+    api.get('/categories').then((d) => setCategories(d.categories)).catch(() => {});
   }
   useEffect(() => { load(); }, []);
+  const activeCategories = categories.filter((c) => c.is_active);
 
   async function create() {
     setError('');
@@ -385,7 +389,7 @@ function MainTasksTab() {
           <Input label="Process name" placeholder="e.g. FP&A" value={name} onChange={(e) => setName(e.target.value)} />
           <Select label="Function" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
             <option value="">Choose a Function…</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {activeCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
           <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
           <ErrorBanner message={error} />
@@ -422,7 +426,7 @@ function MainTasksTab() {
                       value={mt.category_id || ''}
                       onChange={(e) => updateCategory(mt, e.target.value)}
                     >
-                      {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      {categories.map((c) => <option key={c.id} value={c.id}>{c.name}{!c.is_active ? ' (inactive)' : ''}</option>)}
                     </select>
                   </td>
                   <td><Badge tone={mt.is_active ? 'completed' : 'support_required'}>{mt.is_active ? 'Active' : 'Inactive'}</Badge></td>
@@ -458,12 +462,16 @@ function ActivitiesTab() {
   function load() {
     setLoadError('');
     api.get('/task-activities').then((d) => setItems(d.task_activities)).catch((e) => setLoadError(e.message || "Couldn't load Activities."));
-    api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
+    // Unfiltered — the inline per-row Process select below needs to resolve an Activity's CURRENT
+    // Process even if that Process has since been deactivated, or the select shows blank/wrong instead
+    // of the real linked name. The create-form only offers activeMainTasks (below).
+    api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks)).catch(() => {});
     api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
   }
   useEffect(() => { load(); }, []);
 
-  const mainTasksForCategory = mainTasks.filter((m) => !categoryId || m.category_id === categoryId);
+  const activeMainTasks = mainTasks.filter((m) => m.is_active);
+  const mainTasksForCategory = activeMainTasks.filter((m) => !categoryId || m.category_id === categoryId);
 
   async function create() {
     setError('');
@@ -581,7 +589,7 @@ function ActivitiesTab() {
                       value={a.main_task_id || ''}
                       onChange={(e) => updateMainTask(a, e.target.value)}
                     >
-                      {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}{!m.is_active ? ' (inactive)' : ''}</option>)}
                     </select>
                   </td>
                   <td><Badge tone={a.is_active ? 'completed' : 'support_required'}>{a.is_active ? 'Active' : 'Inactive'}</Badge></td>
