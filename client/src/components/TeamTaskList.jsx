@@ -9,7 +9,7 @@ import ImportButton from './ImportButton';
 import AuditTimeline from './AuditTimeline';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
-const EMPTY_TASK_FILTERS = { employee: '', type: '', priority: '', status: '', category: '', mainTask: '', taskActivity: '' };
+const EMPTY_TASK_FILTERS = { employee: '', type: '', priority: '', status: '', mainTask: '', taskActivity: '' };
 const today = new Date().toISOString().slice(0, 10);
 
 function csvEscape(v) {
@@ -38,7 +38,6 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   const [historyTask, setHistoryTask] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [employeeOptions, setEmployeeOptions] = useState([]);
-  const [categoryOptions, setCategoryOptions] = useState([]);
   const [mainTaskOptions, setMainTaskOptions] = useState([]);
   const [taskActivityOptions, setTaskActivityOptions] = useState([]);
 
@@ -47,7 +46,6 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   // at all. Both endpoints are open to every role, so this works the same regardless of who's viewing.
   useEffect(() => {
     api.get('/history/summary').then((d) => setEmployeeOptions(d.summary.map((s) => s.full_name).sort())).catch(() => {});
-    api.get('/categories').then((d) => setCategoryOptions(d.categories.filter((c) => c.is_active).map((c) => c.name).sort())).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTaskOptions(d.main_tasks.filter((m) => m.is_active).map((m) => m.name).sort())).catch(() => {});
     api.get('/task-activities').then((d) => setTaskActivityOptions(d.task_activities.filter((a) => a.is_active).map((a) => a.name).sort())).catch(() => {});
   }, []);
@@ -123,7 +121,6 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
     && (!filters.type || t.type === filters.type)
     && (!filters.priority || t.priority === filters.priority)
     && (!filters.status || t.status === filters.status)
-    && (!filters.category || t.category_name === filters.category)
     && (!filters.mainTask || t.main_task_name === filters.mainTask)
     && (!filters.taskActivity || t.task_activity_name === filters.taskActivity)
   ), [tasks, filters]);
@@ -132,9 +129,9 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   const selectableTasks = useMemo(() => filteredTasks.filter((t) => !isRowReadOnly(t)), [filteredTasks, readOnly, canActOn]);
 
   function exportCsv() {
-    const header = ['Task', 'Employee', 'Type', 'Function', 'Process', 'Activity', 'Priority', 'Due', 'Status'];
+    const header = ['Task', 'Employee', 'Type', 'Process', 'Activity', 'Priority', 'Due', 'Status'];
     const lines = [header.join(',')].concat(
-      filteredTasks.map((t) => [t.description, t.employee_name, t.task_type_name || t.type, t.category_name || '', t.main_task_name || '', t.task_activity_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
+      filteredTasks.map((t) => [t.description, t.employee_name, t.task_type_name || t.type, t.main_task_name || '', t.task_activity_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
     );
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -179,8 +176,8 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <ImportButton
               entityLabel="Tasks"
-              headers={['employee_email', 'description', 'task_type_name', 'category_name', 'main_task_name', 'activity_name', 'reviewer_email', 'priority', 'due_date']}
-              example={{ employee_email: 'jane@company.com', description: 'Complete HDFC Bank Reconciliation for August 2026', task_type_name: '', category_name: 'Finance', main_task_name: 'FP&A', activity_name: 'Bank Reconciliation', reviewer_email: '', priority: 'Medium', due_date: '' }}
+              headers={['employee_email', 'description', 'task_type_name', 'main_task_name', 'activity_name', 'reviewer_email', 'priority', 'due_date']}
+              example={{ employee_email: 'jane@company.com', description: 'Complete HDFC Bank Reconciliation for August 2026', task_type_name: '', main_task_name: 'FP&A', activity_name: 'Bank Reconciliation', reviewer_email: '', priority: 'Medium', due_date: '' }}
               endpoint="/scrum/commitments/import"
               onDone={() => load()}
             />
@@ -235,10 +232,6 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
               <option value="">All types</option>
               <option value="recurring">Recurring</option>
               <option value="adhoc">Ad-hoc</option>
-            </Select>
-            <Select value={filters.category} onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}>
-              <option value="">All Functions</option>
-              {categoryOptions.map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
             <Select value={filters.mainTask} onChange={(e) => setFilters((f) => ({ ...f, mainTask: e.target.value }))}>
               <option value="">All Processes</option>
@@ -329,7 +322,6 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                 <th className="py-2 pr-4">Task</th>
                 <th className="py-2 pr-4">Employee</th>
                 <th className="py-2 pr-4">Type</th>
-                <th className="py-2 pr-4">Function</th>
                 <th className="py-2 pr-4">Process</th>
                 <th className="py-2 pr-4">Priority</th>
                 <th className="py-2 pr-4">Due</th>
@@ -373,7 +365,6 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                       </div>
                     )}
                   </td>
-                  <td className="py-2.5 pr-4 text-grey-600">{t.category_name || <span className="text-grey-300">—</span>}</td>
                   <td className="py-2.5 pr-4 text-grey-600">{t.main_task_name || <span className="text-grey-300">—</span>}</td>
                   <td className="py-2.5 pr-4"><Badge tone={t.priority}>{t.priority}</Badge></td>
                   <td className="py-2.5 pr-4">
@@ -624,8 +615,6 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
   const [description, setDescription] = useState('');
   const [taskTypes, setTaskTypes] = useState([]);
   const [taskTypeId, setTaskTypeId] = useState('');
-  const [categories, setCategories] = useState([]);
-  const [categoryId, setCategoryId] = useState('');
   const [mainTasks, setMainTasks] = useState([]);
   const [mainTaskId, setMainTaskId] = useState('');
   const [taskActivities, setTaskActivities] = useState([]);
@@ -645,7 +634,6 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
       setTaskTypes(active);
       setTaskTypeId((v) => v || active.find((t) => t.mechanic === 'adhoc')?.id || active[0]?.id || '');
     }).catch(() => setLoadError("Couldn't load Task Types — try closing and reopening this form."));
-    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => setLoadError("Couldn't load Functions — try closing and reopening this form."));
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => setLoadError("Couldn't load Processes — try closing and reopening this form."));
     api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => setLoadError("Couldn't load Activities — try closing and reopening this form."));
     api.get('/users').then((d) => setUsers(d.users)).catch(() => {});
@@ -653,14 +641,9 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
 
   const selectedType = taskTypes.find((t) => t.id === taskTypeId);
   const isRecurring = selectedType?.mechanic === 'recurring';
-  const mainTasksForCategory = mainTasks.filter((m) => !categoryId || m.category_id === categoryId);
   const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
   const selectedActivity = taskActivities.find((a) => a.id === taskActivityId);
   const reviewers = users.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role) && u.is_active);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (mainTaskId && !mainTasksForCategory.some((m) => m.id === mainTaskId)) setMainTaskId('');
-  }, [categoryId, mainTasks]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (taskActivityId && !activitiesForMainTask.some((a) => a.id === taskActivityId)) setTaskActivityId('');
@@ -694,16 +677,15 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
     setError('');
     if (!employeeId) return setError('Choose who this task is for.');
     if (!description.trim()) return setError('Please describe the task.');
-    if (!categoryId) return setError('Choose the Function this task belongs to.');
     if (!mainTaskId) return setError('Choose the Process this task belongs to.');
     if (!taskActivityId) return setError('Choose the Activity this task belongs to.');
     setSaving(true);
     try {
       await api.post('/scrum/commitments', {
-        employee_id: employeeId, description, task_type_id: taskTypeId || undefined, category_id: categoryId, main_task_id: mainTaskId, task_activity_id: taskActivityId, reviewer_id: reviewerId || undefined, priority, due_date: dueDate,
+        employee_id: employeeId, description, task_type_id: taskTypeId || undefined, main_task_id: mainTaskId, task_activity_id: taskActivityId, reviewer_id: reviewerId || undefined, priority, due_date: dueDate,
         recurrence_rule: isRecurring ? recurrenceRule : undefined,
       });
-      setDescription(''); setCategoryId(''); setMainTaskId(''); setTaskActivityId('');
+      setDescription(''); setMainTaskId(''); setTaskActivityId('');
       onCreated();
     } catch (e) {
       setError(e.message);
@@ -727,14 +709,10 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
         )}
         <Input label="Due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
       </div>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        <Select label="Function" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-          <option value="">Choose a Function…</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
+      <div className="grid sm:grid-cols-2 gap-3">
         <Select label="Process" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
           <option value="">Choose a Process…</option>
-          {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
         </Select>
         <Select label="Activity" value={taskActivityId} onChange={(e) => setTaskActivityId(e.target.value)}>
           <option value="">Choose an Activity…</option>

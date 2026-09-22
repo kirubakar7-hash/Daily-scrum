@@ -15,7 +15,7 @@ import {
   Check,
 } from 'lucide-react';
 
-const EMPTY_FILTERS = { date_from: '', date_to: '', type: '', status: '', category_id: '', main_task_id: '', task_activity_id: '', employee_id: '', team_id: '', priority: '' };
+const EMPTY_FILTERS = { date_from: '', date_to: '', type: '', status: '', main_task_id: '', task_activity_id: '', employee_id: '', team_id: '', priority: '' };
 const TABS = [
   ['Browse', HistoryIcon],
   ['Search', Search],
@@ -39,7 +39,6 @@ export default function History() {
   const [filters, setFilters] = useState(() => filtersFromSearchParams(searchParams));
   const [summary, setSummary] = useState(null);
   const [commitments, setCommitments] = useState(null);
-  const [categories, setCategories] = useState([]);
   const [mainTasks, setMainTasks] = useState([]);
   const [taskActivities, setTaskActivities] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -57,7 +56,6 @@ export default function History() {
 
   useEffect(() => {
     query(filtersFromSearchParams(searchParams));
-    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
     api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => {});
     api.get('/teams').then((d) => setTeams(d.teams.filter((t) => t.is_active))).catch(() => {});
@@ -148,10 +146,6 @@ export default function History() {
                 <option value="completed">Completed</option>
                 <option value="support_required">Support Required</option>
                 <option value="overdue">Overdue</option>
-              </Select>
-              <Select label="Function" value={filters.category_id} onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}>
-                <option value="">All Functions</option>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </Select>
               <Select label="Process" value={filters.main_task_id} onChange={(e) => setFilters((f) => ({ ...f, main_task_id: e.target.value }))}>
                 <option value="">All Processes</option>
@@ -255,7 +249,6 @@ export default function History() {
                       <th className="pr-3 font-semibold">Employee</th>
                       <th className="pr-3 font-semibold">Task</th>
                       <th className="pr-3 font-semibold">Type</th>
-                      <th className="pr-3 font-semibold">Function</th>
                       <th className="pr-3 font-semibold">Process</th>
                       <th className="pr-3 font-semibold">Activity</th>
                       <th className="pr-3 font-semibold">Reviewer</th>
@@ -272,7 +265,6 @@ export default function History() {
                         <td className="pr-3 font-semibold text-grey-800 whitespace-nowrap">{c.full_name}</td>
                         <td className="pr-3 text-grey-800">{c.description}</td>
                         <td className="pr-3"><Badge tone={c.type}>{c.type}</Badge></td>
-                        <td className="pr-3 whitespace-nowrap text-grey-600">{c.category_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.main_task_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.task_activity_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.reviewer_name || <span className="text-grey-300">—</span>}</td>

@@ -294,9 +294,7 @@ function CategoriesTab() {
 /* ---------------- Processes (parked under a Function, contain individual Activities) ---------------- */
 function MainTasksTab() {
   const [items, setItems] = useState(null);
-  const [categories, setCategories] = useState([]);
   const [name, setName] = useState('');
-  const [categoryId, setCategoryId] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -306,35 +304,23 @@ function MainTasksTab() {
   function load() {
     setLoadError('');
     api.get('/main-tasks').then((d) => setItems(d.main_tasks)).catch((e) => setLoadError(e.message || "Couldn't load Processes."));
-    // Unfiltered — the inline per-row Function select below needs to resolve a Process's CURRENT
-    // Function even if that Function has since been deactivated, or the select shows blank/wrong
-    // instead of the real linked name. The create-form only offers activeCategories (below).
-    api.get('/categories').then((d) => setCategories(d.categories)).catch(() => {});
   }
   useEffect(() => { load(); }, []);
-  const activeCategories = categories.filter((c) => c.is_active);
 
+  // Function isn't asked for here — the org has exactly one today, so the server auto-assigns it (see
+  // resolveDefaultCategoryId in masterData.js). It's still manageable under Admin's own Functions tab.
   async function create() {
     setError('');
     if (!name.trim()) return setError('Name is required.');
-    if (!categoryId) return setError('Choose the Function this Process belongs to.');
     try {
-      await api.post('/main-tasks', { name, category_id: categoryId, description });
-      setName(''); setCategoryId(''); setDescription(''); setFormOpen(false); load();
+      await api.post('/main-tasks', { name, description });
+      setName(''); setDescription(''); setFormOpen(false); load();
     } catch (e) { setError(e.message); }
   }
 
   async function toggle(mt) {
     await api.patch(`/main-tasks/${mt.id}`, { is_active: mt.is_active ? 0 : 1 });
     load();
-  }
-
-  async function updateCategory(mt, newCategoryId) {
-    setError('');
-    try {
-      await api.patch(`/main-tasks/${mt.id}`, { category_id: newCategoryId || null });
-      load();
-    } catch (e) { setError(e.message); }
   }
 
   async function rename(mt, newName) {
@@ -371,13 +357,13 @@ function MainTasksTab() {
     <Card>
       <div className="flex items-start justify-between gap-3 mb-3">
         <p className="text-xs text-grey-400">
-          A grouping between Function and individual Activities — e.g. Function "Finance" contains Processes like "FP&A" or "Accounts Payable", each of which contains the Activities that make up that Process's work.
+          A grouping of Activities — e.g. Process "FP&A" contains Activities like "Bank Reconciliation" or "GST Return Filing".
         </p>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <ImportButton
             entityLabel="Processes"
-            headers={['name', 'category_name', 'description']}
-            example={{ name: 'FP&A', category_name: 'Finance', description: 'Financial Planning & Analysis' }}
+            headers={['name', 'description']}
+            example={{ name: 'FP&A', description: 'Financial Planning & Analysis' }}
             endpoint="/main-tasks/import"
             onDone={load}
           />
@@ -387,10 +373,6 @@ function MainTasksTab() {
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Process">
         <div className="space-y-3">
           <Input label="Process name" placeholder="e.g. FP&A" value={name} onChange={(e) => setName(e.target.value)} />
-          <Select label="Function" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">Choose a Function…</option>
-            {activeCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
           <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
           <ErrorBanner message={error} />
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Process</Button>
@@ -403,7 +385,7 @@ function MainTasksTab() {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm mt-3">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Process</th><th>Function</th><th>Status</th><th colSpan={2}></th></tr></thead>
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Process</th><th>Status</th><th colSpan={2}></th></tr></thead>
             <tbody>
               {items.map((mt, i) => (
                 <tr key={mt.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
@@ -419,15 +401,6 @@ function MainTasksTab() {
                         <Check className="w-3 h-3" /> Saved
                       </div>
                     )}
-                  </td>
-                  <td>
-                    <select
-                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-                      value={mt.category_id || ''}
-                      onChange={(e) => updateCategory(mt, e.target.value)}
-                    >
-                      {categories.map((c) => <option key={c.id} value={c.id}>{c.name}{!c.is_active ? ' (inactive)' : ''}</option>)}
-                    </select>
                   </td>
                   <td><Badge tone={mt.is_active ? 'completed' : 'support_required'}>{mt.is_active ? 'Active' : 'Inactive'}</Badge></td>
                   <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(mt)}>{mt.is_active ? 'Deactivate' : 'Activate'}</button></td>
@@ -449,9 +422,7 @@ function MainTasksTab() {
 function ActivitiesTab() {
   const [items, setItems] = useState(null);
   const [mainTasks, setMainTasks] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [name, setName] = useState('');
-  const [categoryId, setCategoryId] = useState(''); // create-form only, to narrow the Process list below — not stored on the Activity itself
   const [mainTaskId, setMainTaskId] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
@@ -466,12 +437,10 @@ function ActivitiesTab() {
     // Process even if that Process has since been deactivated, or the select shows blank/wrong instead
     // of the real linked name. The create-form only offers activeMainTasks (below).
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks)).catch(() => {});
-    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
   }
   useEffect(() => { load(); }, []);
 
   const activeMainTasks = mainTasks.filter((m) => m.is_active);
-  const mainTasksForCategory = activeMainTasks.filter((m) => !categoryId || m.category_id === categoryId);
 
   async function create() {
     setError('');
@@ -479,7 +448,7 @@ function ActivitiesTab() {
     if (!mainTaskId) return setError('Choose the Process this Activity belongs to.');
     try {
       await api.post('/task-activities', { name, main_task_id: mainTaskId, description });
-      setName(''); setCategoryId(''); setMainTaskId(''); setDescription(''); setFormOpen(false); load();
+      setName(''); setMainTaskId(''); setDescription(''); setFormOpen(false); load();
     } catch (e) { setError(e.message); }
   }
 
@@ -546,13 +515,9 @@ function ActivitiesTab() {
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Activity">
         <div className="space-y-3">
           <Input label="Activity name" placeholder="e.g. Bank Reconciliation" value={name} onChange={(e) => setName(e.target.value)} />
-          <Select label="Function (to help find the Process below)" value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setMainTaskId(''); }}>
-            <option value="">All Functions</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
           <Select label="Process" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
             <option value="">Choose a Process…</option>
-            {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            {activeMainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </Select>
           <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
           <ErrorBanner message={error} />
@@ -1031,12 +996,10 @@ function TaskTypesTab() {
 function RecurringTasksTab() {
   const [items, setItems] = useState(null);
   const [types, setTypes] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [mainTasks, setMainTasks] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [title, setTitle] = useState('');
   const [taskTypeId, setTaskTypeId] = useState('');
-  const [categoryId, setCategoryId] = useState('');
   const [mainTaskId, setMainTaskId] = useState('');
   const [taskActivities, setTaskActivities] = useState([]);
   const [taskActivityId, setTaskActivityId] = useState('');
@@ -1061,24 +1024,18 @@ function RecurringTasksTab() {
       const firstRecurring = d.task_types.find((t) => t.mechanic === 'recurring' && t.is_active);
       if (firstRecurring) setTaskTypeId((v) => v || firstRecurring.id);
     }).catch(() => {});
-    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
     api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => {});
     api.get('/users').then((d) => { setAllUsers(d.users); setEmployees(d.users.filter((u) => u.role === 'employee' && u.is_active)); }).catch(() => {});
   }
   useEffect(() => { load(); }, []);
 
-  // A Process only makes sense once its own Function is picked, and an Activity only makes sense once
-  // its own Process is picked — keeps the Function -> Process -> Activity nesting something the form
-  // actually enforces, not just a suggestion.
-  const mainTasksForCategory = mainTasks.filter((m) => !categoryId || m.category_id === categoryId);
+  // An Activity only makes sense once its own Process is picked — keeps the Process -> Activity nesting
+  // something the form actually enforces, not just a suggestion. Function (above Process) isn't asked
+  // for here — see resolveDefaultCategoryId's comment in masterData.js.
   const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
   const selectedActivity = taskActivities.find((a) => a.id === taskActivityId);
   const reviewers = allUsers.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role) && u.is_active);
-  useEffect(() => {
-    if (mainTaskId && !mainTasksForCategory.some((m) => m.id === mainTaskId)) setMainTaskId('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryId]);
   useEffect(() => {
     if (taskActivityId && !activitiesForMainTask.some((a) => a.id === taskActivityId)) setTaskActivityId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1111,17 +1068,16 @@ function RecurringTasksTab() {
   async function create() {
     setError('');
     if (!title.trim()) return setError('Please describe the recurring task.');
-    if (!categoryId) return setError('Choose the Function this task belongs to.');
     if (!mainTaskId) return setError('Choose the Process this task belongs to.');
     if (!taskActivityId) return setError('Choose the Activity this task belongs to.');
     if (employeeIds.length === 0) return setError('Choose at least one person to assign this to.');
     setSaving(true);
     try {
       await api.post('/recurring-tasks', {
-        title, task_type_id: taskTypeId || null, category_id: categoryId, main_task_id: mainTaskId, task_activity_id: taskActivityId, reviewer_id: reviewerId || undefined,
+        title, task_type_id: taskTypeId || null, main_task_id: mainTaskId, task_activity_id: taskActivityId, reviewer_id: reviewerId || undefined,
         recurrence_rule: recurrenceRule, priority, start_date: startDate, employee_ids: employeeIds,
       });
-      setTitle(''); setCategoryId(''); setMainTaskId(''); setTaskActivityId(''); setEmployeeIds([]); setFormOpen(false);
+      setTitle(''); setMainTaskId(''); setTaskActivityId(''); setEmployeeIds([]); setFormOpen(false);
       load();
     } catch (e) {
       setError(e.message);
@@ -1152,8 +1108,8 @@ function RecurringTasksTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <ImportButton
           entityLabel="Recurring Tasks"
-          headers={['title', 'employee_emails', 'task_type_name', 'category_name', 'main_task_name', 'activity_name', 'reviewer_email', 'priority', 'start_date', 'frequency']}
-          example={{ title: 'Daily bank reconciliation', employee_emails: 'jane@company.com;alex@company.com', task_type_name: '', category_name: 'Finance', main_task_name: 'FP&A', activity_name: 'Bank Reconciliation', reviewer_email: '', priority: 'Medium', start_date: '2026-09-20', frequency: 'Daily' }}
+          headers={['title', 'employee_emails', 'task_type_name', 'main_task_name', 'activity_name', 'reviewer_email', 'priority', 'start_date', 'frequency']}
+          example={{ title: 'Daily bank reconciliation', employee_emails: 'jane@company.com;alex@company.com', task_type_name: '', main_task_name: 'FP&A', activity_name: 'Bank Reconciliation', reviewer_email: '', priority: 'Medium', start_date: '2026-09-20', frequency: 'Daily' }}
           endpoint="/recurring-tasks/import"
           onDone={load}
         />
@@ -1165,13 +1121,9 @@ function RecurringTasksTab() {
           and a fresh one lines up automatically on the right day once they mark theirs done.
         </p>
         <div className="grid sm:grid-cols-2 gap-3 mb-3">
-          <Select label="Function" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">Choose a Function…</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
           <Select label="Process" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
             <option value="">Choose a Process…</option>
-            {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </Select>
           <Select label="Activity" value={taskActivityId} onChange={(e) => setTaskActivityId(e.target.value)}>
             <option value="">Choose an Activity…</option>
@@ -1233,14 +1185,13 @@ function RecurringTasksTab() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Task</th><th>Assigned to</th><th>Type</th><th>Function</th><th>Process</th><th>Frequency</th><th>Status</th><th></th></tr></thead>
+              <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Task</th><th>Assigned to</th><th>Type</th><th>Process</th><th>Frequency</th><th>Status</th><th></th></tr></thead>
               <tbody>
                 {items.map((r, i) => (
                   <tr key={r.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
                     <td className="py-2 font-semibold text-grey-800">{r.title}</td>
                     <td className="text-grey-500">{r.employee_name}</td>
                     <td className="text-grey-500">{r.task_type_name || '—'}</td>
-                    <td className="text-grey-500">{r.category_name || '—'}</td>
                     <td className="text-grey-500">{r.main_task_name || '—'}</td>
                     <td className="text-grey-500">{r.frequency}</td>
                     <td><Badge tone={r.is_active ? 'completed' : 'support_required'}>{r.is_active ? 'Active' : 'Paused'}</Badge></td>
