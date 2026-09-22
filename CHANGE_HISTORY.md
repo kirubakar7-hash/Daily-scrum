@@ -332,3 +332,13 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** New end-to-end test `scrum — confirming your own scrum shows up as "completed" on your leader's Team Today, for today only` in `server/test/api.integration.test.js` — the first test to ever exercise the confirm → status round trip. Full suite: 66/66 passing. `npm run build` clean.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-22
+**Change:** Labeled the Daily Scrum date picker ("Viewing date") and renamed its reset button to "Back to Today."
+**Reason:** User checked the previous change live and reported "Calendar I didn't see" — a live screenshot showed the date field was in fact present and working (top-right, pre-filled with today's date), but an unlabeled native date input reads as static text rather than a control, so it went unnoticed. Confirmed via the deployed JS bundle first that the feature was genuinely live before concluding this was a discoverability issue, not a missing deploy.
+**Files:** `client/src/pages/TeamToday.jsx` only.
+**Tests:** `npm run build` clean. No logic changed — label/copy only.
+**Deployment:** Live.
+**Cost:** None.
