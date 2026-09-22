@@ -266,7 +266,11 @@ function TeamMonthGrid() {
                 <th className="text-left text-grey-500 font-semibold pr-4 sticky left-0 bg-white">Employee</th>
                 {data.days.map((d) => {
                   const dayNum = Number(d.slice(-2));
-                  const weekday = new Date(Date.UTC(...d.split('-').map(Number))).getUTCDay();
+                  // Date.UTC's month argument is 0-indexed (0=Jan) — the "MM" straight out of a YYYY-MM-DD
+                  // string is 1-indexed, so it must be adjusted by -1 here, same as recurrence.js's own
+                  // parseDate() does. Missing that shifted every weekday label here by one whole month.
+                  const [dYear, dMonth, dDay] = d.split('-').map(Number);
+                  const weekday = new Date(Date.UTC(dYear, dMonth - 1, dDay)).getUTCDay();
                   return (
                     <th key={d} className="w-7 text-center text-[10px] font-medium text-grey-400 leading-tight">
                       <div>{WEEKDAY_INITIALS[weekday]}</div>
