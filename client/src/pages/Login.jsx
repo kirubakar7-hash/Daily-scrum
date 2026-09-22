@@ -101,8 +101,8 @@ export default function Login() {
           </div>
           <Card className="shadow-lg shadow-grey-900/[0.06]">
             <form onSubmit={onSubmit} className="space-y-4">
-              <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required autoFocus />
-              <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <Input label="Email" type="email" name="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required autoFocus />
+              <Input label="Password" type="password" name="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
               <ErrorBanner message={error} />
               <Button type="submit" className="w-full" disabled={busy}>
                 {busy && <span className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />}
