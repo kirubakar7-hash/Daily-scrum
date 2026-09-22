@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { formatBusinessDate } from '../lib/businessDate';
 import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationSearch, Input, Select, Skeleton, humanize } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
 import {
@@ -269,7 +270,7 @@ export default function History() {
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.task_activity_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.reviewer_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3"><Badge tone={c.status}>{humanize(c.status)}</Badge></td>
-                        <td className="pr-3 whitespace-nowrap text-grey-500">{c.completed_at ? c.completed_at.slice(0, 10) : <span className="text-grey-300">—</span>}</td>
+                        <td className="pr-3 whitespace-nowrap text-grey-500">{c.completed_at ? formatBusinessDate(c.completed_at) : <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 max-w-[220px]">
                           <div className="flex flex-wrap gap-1 mb-1">
                             {!!c.is_leader_support_task && <Badge tone="pending">Support Task</Badge>}

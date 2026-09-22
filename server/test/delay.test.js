@@ -28,13 +28,23 @@ test('withLateness — no completed_at reports 0', () => {
 // This is the exact bug fixed this session: due_date is a calendar-day string, completed_at is a full
 // timestamp — comparing them at millisecond precision (instead of calendar-day precision) rounds a
 // same-day-but-later-clock-time completion up to "1 day late" even though it was completed on time.
+// 14:30 UTC = 8:00pm IST — solidly within the same IST calendar day as the due date, not near the
+// UTC/IST boundary (see the businessDate.test.js / IST-boundary test below for that edge specifically).
 test('withLateness — completed later in the day, on the due date itself, is NOT late', () => {
-  const row = { due_date: '2026-09-10', completed_at: '2026-09-10T22:45:00.000Z' };
+  const row = { due_date: '2026-09-10', completed_at: '2026-09-10T14:30:00.000Z' };
   assert.equal(withLateness(row).days_late, 0);
 });
 
 test('withLateness — completed the next calendar day IS 1 day late', () => {
   const row = { due_date: '2026-09-10', completed_at: '2026-09-11T00:05:00.000Z' };
+  assert.equal(withLateness(row).days_late, 1);
+});
+
+// IST business date, not completed_at's raw UTC date: 10:45pm UTC on the due date is already 4:15am IST
+// the NEXT calendar day, so this is genuinely a day late in business terms even though the UTC date
+// portion alone still reads as the due date. Before this session's IST fix, this incorrectly reported 0.
+test('withLateness — completed late UTC evening (already past midnight IST) IS 1 day late', () => {
+  const row = { due_date: '2026-09-10', completed_at: '2026-09-10T22:45:00.000Z' };
   assert.equal(withLateness(row).days_late, 1);
 });
 

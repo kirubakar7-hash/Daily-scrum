@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react';
 import { ClipboardList, Users, CheckCircle2, AlertTriangle, LifeBuoy, CalendarClock, Inbox, ChevronLeft, ChevronRight, CalendarDays, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
+import { getBusinessDate, formatBusinessTime } from '../lib/businessDate';
 import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Skeleton } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
 import TeamTaskList from '../components/TeamTaskList';
 
 // The real current day — used wherever "today" must mean today regardless of what date Team Overview
 // is currently browsing (Team Tasks/Requests deliberately stay on live, current data; see selectedDate).
-const todayStr = new Date().toISOString().slice(0, 10);
+// This is India Standard Time (the business day), not the browser's own local date.
+const todayStr = getBusinessDate();
 const TABS = [
   ['Team Overview', Users],
   ['Team Tasks', ClipboardList],
@@ -182,7 +184,7 @@ export default function TeamToday() {
                           ? (
                             <span className="inline-flex items-center gap-1 text-emerald-600 font-semibold">
                               <CheckCircle2 className="w-3.5 h-3.5" /> Done
-                              {row.scrum_completed_at && <span className="text-grey-400 font-normal">· {row.scrum_completed_at.slice(11, 16)}</span>}
+                              {row.scrum_completed_at && <span className="text-grey-400 font-normal">· {formatBusinessTime(row.scrum_completed_at)}</span>}
                             </span>
                           )
                           : <span className="text-grey-400">Pending</span>}

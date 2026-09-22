@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { getBusinessDate } from './lib/businessDate.js';
 
 // PostgreSQL replaces the old local SQLite file (see CHANGE_HISTORY.md / MIGRATION.md for why: a single
 // file on a single disk cannot survive a real multi-instance, multi-tenant-ready production deployment).
@@ -84,8 +85,11 @@ export const db = {
   },
 };
 
+// This app's business date is India Standard Time, not the server process's own UTC wall clock — see
+// lib/businessDate.js for why that distinction matters and how it's computed. today() keeps this exact
+// name/signature since ~15 call sites across the routes already depend on it; only what it computes changed.
 export function today() {
-  return new Date().toISOString().slice(0, 10);
+  return getBusinessDate();
 }
 
 // Only needed by tests, which need every pool connection released before a test run's temp resources can

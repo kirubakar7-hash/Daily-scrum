@@ -1,4 +1,5 @@
 import { Pencil, Trash2, Plus, CalendarClock, LifeBuoy } from 'lucide-react';
+import { formatBusinessDateTime } from '../lib/businessDate';
 import { EmptyState, IllustrationEmptyList, Timeline, humanize } from './ui';
 
 const SUBJECT_LABELS = {
@@ -76,7 +77,7 @@ export default function AuditTimeline({ logs, emptyTitle = 'No changes recorded 
                 <Icon className="w-3 h-3 shrink-0" />
                 {l.title}
               </span>
-              <span className="text-grey-400 text-[11px] whitespace-nowrap">{l.changed_at}</span>
+              <span className="text-grey-400 text-[11px] whitespace-nowrap">{formatBusinessDateTime(l.changed_at)}</span>
             </div>
             {l.detail && typeof l.detail === 'object' && l.detail.from !== null && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

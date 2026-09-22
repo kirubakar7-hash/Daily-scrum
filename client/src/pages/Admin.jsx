@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Users, UsersRound, Tag, Tags, Repeat, Plus, Check, UserPlus, ListTree, ListChecks } from 'lucide-react';
 import { api } from '../lib/api';
+import { getBusinessDate } from '../lib/businessDate';
 import { badgeClassFor, Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
 import RecurrencePicker, { DEFAULT_RULE } from '../components/RecurrencePicker';
@@ -1007,7 +1008,7 @@ function RecurringTasksTab() {
   const [reviewerId, setReviewerId] = useState('');
   const [recurrenceRule, setRecurrenceRule] = useState(DEFAULT_RULE);
   const [priority, setPriority] = useState('Medium');
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [startDate, setStartDate] = useState(getBusinessDate());
   const [employeeIds, setEmployeeIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');

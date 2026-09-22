@@ -3,6 +3,7 @@ import { db, today } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { visibleEmployeeIds } from '../lib/scope.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { getBusinessDate } from '../lib/businessDate.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -185,7 +186,10 @@ router.get('/export.csv', asyncHandler(async (req, res) => {
     rows.map((r) => {
       const code = `TSK-${String(r.seq).padStart(6, '0')}`;
       const taskType = r.task_type_name || (r.type === 'recurring' ? 'Recurring' : 'Ad-hoc');
-      return [code, r.scrum_date, r.full_name, r.description, r.type, taskType, r.main_task_name || '', r.task_activity_name || '', r.reviewer_name || '', r.priority, r.status, r.due_date, r.completed_at || '', r.non_completion_reason].map(escape).join(',');
+      // completed_at is stored as a UTC instant — shown here as its IST business date, matching what
+      // History's own on-screen Task Records table shows for the same column (see client/src/pages/History.jsx).
+      const completedDate = r.completed_at ? getBusinessDate(new Date(r.completed_at)) : '';
+      return [code, r.scrum_date, r.full_name, r.description, r.type, taskType, r.main_task_name || '', r.task_activity_name || '', r.reviewer_name || '', r.priority, r.status, r.due_date, completedDate, r.non_completion_reason].map(escape).join(',');
     })
   );
   res.set('Content-Type', 'text/csv');

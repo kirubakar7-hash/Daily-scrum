@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy, CalendarClock, History as HistoryIcon, User, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
+import { getBusinessDate } from '../lib/businessDate';
 import { badgeClassFor, Badge, Button, DeleteButton, EmptyState, ErrorBanner, humanize, IllustrationEmptyList, IllustrationSearch, Input, Modal, Select, Skeleton, Textarea } from './ui';
 import RecurrencePicker, { DEFAULT_RULE } from './RecurrencePicker';
 import InfoTip from './InfoTip';
@@ -10,7 +11,7 @@ import AuditTimeline from './AuditTimeline';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
 const EMPTY_TASK_FILTERS = { employee: '', type: '', priority: '', status: '', mainTask: '', taskActivity: '' };
-const today = new Date().toISOString().slice(0, 10);
+const today = getBusinessDate();
 
 function csvEscape(v) {
   return `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -504,23 +505,24 @@ function StaticDueDate({ task }) {
   );
 }
 
-/** Tomorrow / next Monday / a week out — the three dates a leader reaches for most when pushing a task out. */
+/** Tomorrow / next Monday / a week out — the three dates a leader reaches for most when pushing a task out.
+ *  Anchored to the current IST business date, not the browser's own local clock (which could be any
+ *  timezone a traveling Leader happens to be in) — then added entirely in UTC calendar-day space, same
+ *  convention server/src/lib/recurrence.js uses, so this never drifts a day regardless of where it runs. */
 function quickPickDates() {
-  const mk = (d) => d.toISOString().slice(0, 10);
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const nextMonday = new Date();
-  const untilMonday = (8 - nextMonday.getDay()) % 7 || 7;
-  nextMonday.setDate(nextMonday.getDate() + untilMonday);
-
-  const inAWeek = new Date();
-  inAWeek.setDate(inAWeek.getDate() + 7);
+  const [y, m, d] = getBusinessDate().split('-').map(Number);
+  const base = new Date(Date.UTC(y, m - 1, d));
+  const mk = (offsetDays) => {
+    const dt = new Date(base);
+    dt.setUTCDate(dt.getUTCDate() + offsetDays);
+    return dt.toISOString().slice(0, 10);
+  };
+  const untilMonday = (8 - base.getUTCDay()) % 7 || 7;
 
   return [
-    ['Tomorrow', mk(tomorrow)],
-    ['Next Monday', mk(nextMonday)],
-    ['In a week', mk(inAWeek)],
+    ['Tomorrow', mk(1)],
+    ['Next Monday', mk(untilMonday)],
+    ['In a week', mk(7)],
   ];
 }
 
