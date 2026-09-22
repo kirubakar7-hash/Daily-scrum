@@ -39,14 +39,16 @@ router.get('/employee', asyncHandler(async (req, res) => {
   const openActions = await db.prepare(`SELECT * FROM actions WHERE employee_id=? AND status != 'completed' AND is_active=1`).all(employeeId);
 
   // Due-so-far, not merely "left pending" — a task overdue but never started must count against
-  // reliability, not sit outside the denominator entirely.
-  const totalDue = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND due_date <= ?`).get(employeeId, date)).c;
-  const totalCompleted = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND status='completed'`).get(employeeId)).c;
+  // reliability, not sit outside the denominator entirely. is_active=1 on every count below, matching the
+  // lists above and the Leader/Org dashboard's equivalent counts — without it, this screen's own numbers
+  // could silently disagree with the lists right next to them, and with every other dashboard's "Pending".
+  const totalDue = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND due_date <= ? AND is_active=1`).get(employeeId, date)).c;
+  const totalCompleted = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND status='completed' AND is_active=1`).get(employeeId)).c;
   const commitmentRate = totalDue ? Math.round((totalCompleted / totalDue) * 1000) / 10 : null;
 
-  const pendingCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND status='pending'`).get(employeeId)).c;
-  const inProgressCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND status='in_progress'`).get(employeeId)).c;
-  const supportRequiredCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND status='support_required'`).get(employeeId)).c;
+  const pendingCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND status='pending' AND is_active=1`).get(employeeId)).c;
+  const inProgressCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND status='in_progress' AND is_active=1`).get(employeeId)).c;
+  const supportRequiredCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id=? AND status='support_required' AND is_active=1`).get(employeeId)).c;
 
   res.json({
     date,
