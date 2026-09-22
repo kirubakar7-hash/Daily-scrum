@@ -137,6 +137,12 @@ export default function TeamToday() {
             <Badge tone="support_required">Delayed</Badge> counts tasks whose due date has passed —{' '}
             calculated automatically from the due date, never entered by hand. <Badge tone="support_required">Support</Badge> shows tasks flagged as needing your help.
           </HelpBanner>
+          {selectedDate !== todayStr && (
+            <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mb-3 mt-2">
+              <strong>Scrum</strong> above is accurate for {selectedDate} specifically. <strong>Today's Work</strong>, <strong>Delayed</strong>, and <strong>Support</strong> always reflect right-now status, not the picked date — for exactly what happened on {selectedDate}, use{' '}
+              <a href={`/history?date_from=${selectedDate}&date_to=${selectedDate}`} className="underline font-semibold hover:text-amber-900">Team History</a>.
+            </p>
+          )}
 
           {team.length === 0 ? (
             <EmptyState icon={<IllustrationTeam className="w-16 h-16 mx-auto" />} title="No team members assigned yet">
@@ -329,12 +335,20 @@ function TeamMonthGrid({ search }) {
                       <td key={d} className={`text-center py-1 ${isToday ? 'bg-brand-50' : ''}`}>
                         {isFuture ? (
                           <span className="inline-block w-4 h-4 rounded-full bg-grey-50" title="Not yet due" />
-                        ) : status === 'completed' ? (
-                          <span className="inline-flex w-4 h-4 rounded-full bg-emerald-500 items-center justify-center" title={`${d} — Done`}>
-                            <CheckCircle2 className="w-3 h-3 text-white" />
-                          </span>
                         ) : (
-                          <span className="inline-block w-4 h-4 rounded-full border-2 border-grey-200" title={`${d} — Pending`} />
+                          <a
+                            href={`/history?employee_id=${row.employee_id}&date_from=${d}&date_to=${d}`}
+                            title={`See what ${row.full_name} did on ${d}`}
+                            className="inline-flex"
+                          >
+                            {status === 'completed' ? (
+                              <span className="inline-flex w-4 h-4 rounded-full bg-emerald-500 items-center justify-center hover:ring-2 hover:ring-emerald-300 transition-all">
+                                <CheckCircle2 className="w-3 h-3 text-white" />
+                              </span>
+                            ) : (
+                              <span className="inline-block w-4 h-4 rounded-full border-2 border-grey-200 hover:border-brand-400 transition-colors" />
+                            )}
+                          </a>
                         )}
                       </td>
                     );
