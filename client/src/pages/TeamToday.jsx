@@ -64,8 +64,9 @@ export default function TeamToday() {
           )}
         </div>
         {tab === 'Team Overview' && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-end gap-2">
             <Input
+              label="Viewing date"
               type="date"
               value={selectedDate}
               max={todayStr}
@@ -73,7 +74,7 @@ export default function TeamToday() {
               className="!w-auto"
             />
             {selectedDate !== todayStr && (
-              <Button size="sm" variant="secondary" onClick={() => setSelectedDate(todayStr)}>Today</Button>
+              <Button size="sm" variant="secondary" onClick={() => setSelectedDate(todayStr)}>Back to Today</Button>
             )}
           </div>
         )}
