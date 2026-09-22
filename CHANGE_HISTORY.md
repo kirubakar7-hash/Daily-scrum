@@ -353,3 +353,24 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** New test `team-month — returns every day of the requested month, scoped to the caller's roster, reflecting a real confirmed scrum` in `server/test/api.integration.test.js` — confirms day count, day ordering, roster scoping, and that a real confirmed scrum lands on the correct day. Full suite: 67/67 passing. `npm run build` clean.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-22
+**Change:** Fixed the month grid's weekday labels (T/F/S/S/M/T/W above each date) being off by one whole month.
+**Reason:** `Date.UTC()`'s month argument is 0-indexed (0=Jan); the 1-indexed "MM" pulled straight out of a `YYYY-MM-DD` string needs a `-1` before it goes in — `recurrence.js`'s own `parseDate()` already does this correctly, but the new grid code didn't. Caught live: user screenshotted the real deployed grid and the weekday row read as a valid week, just starting on the wrong day (Thursday — October 1's real weekday — instead of Tuesday, September 1's).
+**Files:** `client/src/pages/TeamToday.jsx` only. Day numbers themselves were unaffected (formatted directly from the date string, not through `Date.UTC`) — only the weekday letters were wrong.
+**Tests:** Verified directly against real September 2026 dates via a standalone script before deploying, then confirmed live in the user's own browser session after the fix (weekday row now reads T, W, T, F, S, S, M... correctly sequential from Tuesday).
+**Deployment:** Live.
+**Cost:** None.
+
+---
+
+**Date:** 2026-09-22
+**Change:** Added a search box (filters both Day and Month views by name), a distinct highlight on the Month grid's Today column, real confirmation time next to "Done" status (e.g. "Done · 09:12"), and a new "Support Needed" panel on Team Overview showing every currently-flagged task with the employee's own real reason/explanation text.
+**Reason:** User shared a screenshot of an elaborate "enterprise" scrum-dashboard mockup (search bar, filters, KPI cards, a team-wide attendance matrix, a blocker log) and asked to build it. Flagged before building: several pieces didn't match this app's real data model or contradicted earlier explicit decisions — a "Department" filter (Department was fully deleted at the user's own request), "Sprint 42"/capacity/velocity (this app has no sprint concept, it's a daily-commitment tracker), specific blocker text that looked like placeholder content from whatever tool generated the mockup, and decorative fake version/branding footer text. Proposed and built only the subset backed by real data instead.
+**Files:** `server/src/routes/leader.js` (`GET /team-today` now also returns `scrum_completed_at` from the existing `scrum_sessions.completed_at` column — already captured, never surfaced before), `client/src/pages/TeamToday.jsx` (search state filtering both views client-side; Today-column styling in `TeamMonthGrid`; new `SupportReasonsPanel`, which reuses `GET /leader/team-tasks` — no new endpoint — filtered to `status='support_required'` rows and their real `non_completion_reason`/`non_completion_explanation`).
+**Database:** No schema change.
+**Tests:** Extended the existing confirm-scrum end-to-end test to also assert `scrum_completed_at` comes back in the real `YYYY-MM-DD HH:MM:SS` format. Full suite: 67/67 passing. `npm run build` clean.
+**Deployment:** Live.
+**Cost:** None.
