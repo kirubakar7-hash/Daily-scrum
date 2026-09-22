@@ -1026,7 +1026,7 @@ function RecurringTasksTab() {
     }).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
     api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => {});
-    api.get('/users').then((d) => { setAllUsers(d.users); setEmployees(d.users.filter((u) => u.role === 'employee' && u.is_active)); }).catch(() => {});
+    api.get('/users').then((d) => { setAllUsers(d.users); setEmployees(d.users.filter((u) => ['employee', 'leader'].includes(u.role) && u.is_active)); }).catch(() => {});
   }
   useEffect(() => { load(); }, []);
 
@@ -1150,7 +1150,7 @@ function RecurringTasksTab() {
         <div className="mb-3">
           <span className="block text-sm font-medium text-grey-700 mb-1.5">Assign to</span>
           {employees.length === 0 ? (
-            <EmptyState icon={<IllustrationTeam className="w-14 h-14 mx-auto" />} title="No active employees yet" />
+            <EmptyState icon={<IllustrationTeam className="w-14 h-14 mx-auto" />} title="No active employees or leaders yet" />
           ) : (
             <div className="flex flex-wrap gap-2">
               {employees.map((emp) => {
