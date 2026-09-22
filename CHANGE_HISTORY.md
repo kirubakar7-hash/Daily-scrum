@@ -319,3 +319,16 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** `npm run build` clean. Actual autofill behavior depends on each browser's own saved form history — nothing to verify server-side or with a fresh test session.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-22
+**Change:** Two related pieces, requested together as "scrum meeting status for each date, with calendar support":
+1. Daily Scrum → Team Overview gained a date picker (capped at today) so a Leader-tier/Senior Management viewer can browse any past day's scrum status, not just today. Team Tasks and Requests tabs deliberately stay on live "now" data regardless of the selected date.
+2. A "Confirm today's scrum" card on My Tasks (self-service, every role except read-only Senior Management) — the actual check-in action, separate from any individual task.
+**Reason:** Explicit request. Researched first before building: found that nothing in the live app ever marked a scrum session completed — a leftover gap from the pre-2026-09-10 task-management rebuild. Flagged this to the user before proceeding, since a calendar alone would have shown 100% Pending for every date forever; user confirmed building both.
+**Files:** `client/src/pages/TeamToday.jsx` (date-picker state, `selectedDate` vs. the real `todayStr`), `client/src/pages/MyTasks.jsx` (new `ConfirmScrumCard`).
+**Database:** No schema change. **Backend:** No backend changes at all — `GET /leader/team-today?date=`, `GET /scrum/today`, and `POST /scrum/confirm` already existed and already did exactly what was needed; nothing in the live UI had ever called them for this purpose.
+**Tests:** New end-to-end test `scrum — confirming your own scrum shows up as "completed" on your leader's Team Today, for today only` in `server/test/api.integration.test.js` — the first test to ever exercise the confirm → status round trip. Full suite: 66/66 passing. `npm run build` clean.
+**Deployment:** Live.
+**Cost:** None.
