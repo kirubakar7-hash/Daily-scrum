@@ -508,6 +508,32 @@ test('hierarchy — Team Today includes Leaders/Admins in the roster for wide-op
   assert.ok(rosterIds.includes(ids.adminId), 'an Admin must see another Admin in Team Today\'s roster too');
 });
 
+test('team-month — returns every day of the requested month, scoped to the caller\'s roster, reflecting a real confirmed scrum', async () => {
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+
+  const confirm = await fetch(`${baseUrl}/api/scrum/confirm`, { method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({}) });
+  assert.equal(confirm.status, 200);
+
+  const monthStr = today().slice(0, 7);
+  const res = await fetch(`${baseUrl}/api/leader/team-month?month=${monthStr}`, { headers: authed(midLeaderALogin.token) });
+  assert.equal(res.status, 200);
+  const { month, days, team } = await res.json();
+  assert.equal(month, monthStr);
+
+  const [y, m] = monthStr.split('-').map(Number);
+  const expectedDayCount = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  assert.equal(days.length, expectedDayCount, 'must return exactly one entry per day of the month, no more, no less');
+  assert.ok(days[0].endsWith('-01') && days[days.length - 1].endsWith(String(expectedDayCount).padStart(2, '0')), 'days must run from the 1st to the last day of the month, in order');
+
+  const rosterIds = team.map((t) => t.employee_id);
+  assert.ok(rosterIds.includes(ids.reportAId), 'Mid Leader A\'s roster must include their direct report');
+  assert.ok(!rosterIds.includes(ids.reportBId), 'must not include someone outside the caller\'s reporting chain');
+
+  const reportARow = team.find((t) => t.employee_id === ids.reportAId);
+  assert.equal(reportARow.statuses[today()], 'completed', 'the confirmed scrum from above must show up on the correct day');
+});
+
 test('hierarchy — Admin\'s own Dashboard counts every active user, org-wide, not just Employees', async () => {
   const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
   const res = await fetch(`${baseUrl}/api/dashboard/leader`, { headers: authed(adminLogin.token) });

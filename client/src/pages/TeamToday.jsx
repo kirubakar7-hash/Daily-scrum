@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ClipboardList, Users, CheckCircle2, AlertTriangle, LifeBuoy, CalendarClock, Inbox } from 'lucide-react';
+import { ClipboardList, Users, CheckCircle2, AlertTriangle, LifeBuoy, CalendarClock, Inbox, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Skeleton } from '../components/ui';
@@ -24,6 +24,7 @@ export default function TeamToday() {
   // that would shift the selected calendar day by the viewer's local timezone (kept as the plain
   // YYYY-MM-DD string the date input already produces, straight through to the API).
   const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [view, setView] = useState('Day'); // 'Day' | 'Month' — Team Overview only
   const readOnly = user.role === 'senior_management';
   const canReachAdmin = user.role === 'admin' || user.role === 'super_admin';
 
@@ -64,17 +65,34 @@ export default function TeamToday() {
           )}
         </div>
         {tab === 'Team Overview' && (
-          <div className="flex items-end gap-2">
-            <Input
-              label="Viewing date"
-              type="date"
-              value={selectedDate}
-              max={todayStr}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="!w-auto"
-            />
-            {selectedDate !== todayStr && (
-              <Button size="sm" variant="secondary" onClick={() => setSelectedDate(todayStr)}>Back to Today</Button>
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="flex gap-1 bg-grey-100 rounded-xl p-1 w-fit">
+              {['Day', 'Month'].map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all press-scale ${
+                    view === v ? 'bg-white text-brand-700 shadow-sm' : 'text-grey-500 hover:text-grey-700'
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            {view === 'Day' && (
+              <>
+                <Input
+                  label="Viewing date"
+                  type="date"
+                  value={selectedDate}
+                  max={todayStr}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="!w-auto"
+                />
+                {selectedDate !== todayStr && (
+                  <Button size="sm" variant="secondary" onClick={() => setSelectedDate(todayStr)}>Back to Today</Button>
+                )}
+              </>
             )}
           </div>
         )}
@@ -95,10 +113,10 @@ export default function TeamToday() {
         ))}
       </div>
 
-      {tab === 'Team Overview' && (
+      {tab === 'Team Overview' && view === 'Day' && (
         <Card className="animate-fade-in-up">
           <HelpBanner>
-            This screen shows what each person actually needs, without you asking. <strong>Scrum</strong> shows whether they've confirmed that day's commitments yet — pick a date above to look back at any past day.{' '}
+            This screen shows what each person actually needs, without you asking. <strong>Scrum</strong> shows whether they've confirmed that day's commitments yet — pick a date above to look back at any past day, or switch to <strong>Month</strong> to see the whole team at once.{' '}
             <Badge tone="support_required">Delayed</Badge> counts tasks whose due date has passed —{' '}
             calculated automatically from the due date, never entered by hand. <Badge tone="support_required">Support</Badge> shows tasks flagged as needing your help.
           </HelpBanner>
@@ -161,6 +179,8 @@ export default function TeamToday() {
         </Card>
       )}
 
+      {tab === 'Team Overview' && view === 'Month' && <TeamMonthGrid />}
+
       {tab === 'Team Tasks' && (
         <Card className="animate-fade-in-up">
           <TeamTaskList team={team} readOnly={readOnly} date={todayStr} />
@@ -173,6 +193,122 @@ export default function TeamToday() {
         </Card>
       )}
     </div>
+  );
+}
+
+const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+// Pure integer arithmetic on the 'YYYY-MM' string — deliberately never touches a Date object, so there's
+// no timezone edge case to get wrong when just stepping a month forward or back.
+function shiftMonth(monthStr, delta) {
+  let [y, m] = monthStr.split('-').map(Number);
+  m += delta;
+  if (m < 1) { m = 12; y -= 1; }
+  if (m > 12) { m = 1; y += 1; }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+/** Team-wide month grid — one row per person, one column per day, so a Leader can see everyone's scrum
+ *  check-in history for a whole month at a glance (an attendance-register layout, the natural shape for
+ *  "one status per person per day" once more than one person is involved — unlike a single person's own
+ *  month, which reads fine as a wrapped 7-day calendar, a team's doesn't: there's nowhere to put six
+ *  people's status in one day-cell without a matrix). */
+function TeamMonthGrid() {
+  const [month, setMonth] = useState(todayStr.slice(0, 7));
+  const [data, setData] = useState(null);
+  const [loadError, setLoadError] = useState('');
+
+  function load() {
+    setLoadError('');
+    api.get(`/leader/team-month?month=${month}`).then(setData).catch((e) => setLoadError(e.message || "Couldn't load the month."));
+  }
+  useEffect(() => { load(); }, [month]);
+
+  return (
+    <Card className="animate-fade-in-up">
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <h2 className="font-bold text-grey-900 flex items-center gap-2">
+          <CalendarDays className="w-4 h-4 text-brand-600" /> {month}
+        </h2>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setMonth((m) => shiftMonth(m, -1))} className="p-1.5 rounded-lg hover:bg-grey-100 transition-colors" aria-label="Previous month">
+            <ChevronLeft className="w-4 h-4 text-grey-500" />
+          </button>
+          {month !== todayStr.slice(0, 7) && (
+            <Button size="sm" variant="secondary" onClick={() => setMonth(todayStr.slice(0, 7))}>This Month</Button>
+          )}
+          <button
+            onClick={() => setMonth((m) => shiftMonth(m, 1))}
+            disabled={month >= todayStr.slice(0, 7)}
+            className="p-1.5 rounded-lg hover:bg-grey-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label="Next month"
+          >
+            <ChevronRight className="w-4 h-4 text-grey-500" />
+          </button>
+        </div>
+      </div>
+
+      {!data ? (
+        loadError ? (
+          <><ErrorBanner message={loadError} /><Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button></>
+        ) : (
+          <Skeleton className="h-40 w-full" />
+        )
+      ) : data.team.length === 0 ? (
+        <EmptyState icon={<IllustrationTeam className="w-16 h-16 mx-auto" />} title="No team members assigned yet">
+          Nothing to show here until someone reports to you.
+        </EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="text-sm border-separate" style={{ borderSpacing: '2px' }}>
+            <thead>
+              <tr>
+                <th className="text-left text-grey-500 font-semibold pr-4 sticky left-0 bg-white">Employee</th>
+                {data.days.map((d) => {
+                  const dayNum = Number(d.slice(-2));
+                  const weekday = new Date(Date.UTC(...d.split('-').map(Number))).getUTCDay();
+                  return (
+                    <th key={d} className="w-7 text-center text-[10px] font-medium text-grey-400 leading-tight">
+                      <div>{WEEKDAY_INITIALS[weekday]}</div>
+                      <div className="text-grey-600 font-semibold">{dayNum}</div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {data.team.map((row) => (
+                <tr key={row.employee_id}>
+                  <td className="pr-4 py-1 font-semibold text-grey-800 whitespace-nowrap sticky left-0 bg-white">{row.full_name}</td>
+                  {data.days.map((d) => {
+                    const status = row.statuses[d];
+                    const isFuture = d > todayStr;
+                    return (
+                      <td key={d} className="text-center py-1">
+                        {isFuture ? (
+                          <span className="inline-block w-4 h-4 rounded-full bg-grey-50" title="Not yet due" />
+                        ) : status === 'completed' ? (
+                          <span className="inline-flex w-4 h-4 rounded-full bg-emerald-500 items-center justify-center" title={`${d} — Done`}>
+                            <CheckCircle2 className="w-3 h-3 text-white" />
+                          </span>
+                        ) : (
+                          <span className="inline-block w-4 h-4 rounded-full border-2 border-grey-200" title={`${d} — Pending`} />
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex items-center gap-4 mt-3 text-xs text-grey-500">
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full bg-emerald-500" /> Confirmed</span>
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full border-2 border-grey-200" /> Pending</span>
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full bg-grey-50" /> Not yet due</span>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 

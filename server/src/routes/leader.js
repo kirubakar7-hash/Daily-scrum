@@ -65,6 +65,42 @@ router.get('/team-today', requireRole('super_admin', 'admin', 'leader', 'senior_
   res.json({ date, team: rows });
 }));
 
+/** GET /api/leader/team-month — one row per team member, one column per day of the given month, each
+ *  cell the day's scrum status. Powers the Daily Scrum "Month view" grid. Reuses scopedEmployees() so the
+ *  roster here can never drift from Team Overview's own roster. */
+router.get('/team-month', requireRole('super_admin', 'admin', 'leader', 'senior_management'), asyncHandler(async (req, res) => {
+  const month = req.query.month || today().slice(0, 7); // 'YYYY-MM'
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Invalid month.' });
+
+  const employees = await scopedEmployees(req.user);
+  const [y, m] = month.split('-').map(Number);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate(); // day 0 of month m (0-indexed as m) = last day of month m (1-indexed)
+  const days = Array.from({ length: daysInMonth }, (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`);
+
+  if (employees.length === 0) return res.json({ month, days, team: [] });
+
+  const ids = employees.map((e) => e.id);
+  const clause = ids.map(() => '?').join(',');
+  const sessions = await db.prepare(`
+    SELECT employee_id, scrum_date, status FROM scrum_sessions
+    WHERE employee_id IN (${clause}) AND scrum_date >= ? AND scrum_date <= ?
+  `).all(...ids, days[0], days[days.length - 1]);
+
+  const statusesByEmployee = new Map();
+  for (const s of sessions) {
+    if (!statusesByEmployee.has(s.employee_id)) statusesByEmployee.set(s.employee_id, {});
+    statusesByEmployee.get(s.employee_id)[s.scrum_date] = s.status;
+  }
+
+  const team = employees.map((e) => ({
+    employee_id: e.id,
+    full_name: e.full_name,
+    statuses: statusesByEmployee.get(e.id) || {},
+  }));
+
+  res.json({ month, days, team });
+}));
+
 // Shared by team-tasks and org-tasks below — they differ only in which employee-id list is used, so the
 // query itself (previously copy-pasted between the two) now lives in one place.
 async function openTasksForEmployees(ids, date) {
