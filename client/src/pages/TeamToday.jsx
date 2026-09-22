@@ -6,7 +6,9 @@ import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, Il
 import HelpBanner from '../components/HelpBanner';
 import TeamTaskList from '../components/TeamTaskList';
 
-const today = new Date().toISOString().slice(0, 10);
+// The real current day — used wherever "today" must mean today regardless of what date Team Overview
+// is currently browsing (Team Tasks/Requests deliberately stay on live, current data; see selectedDate).
+const todayStr = new Date().toISOString().slice(0, 10);
 const TABS = [
   ['Team Overview', Users],
   ['Team Tasks', ClipboardList],
@@ -18,15 +20,19 @@ export default function TeamToday() {
   const [team, setTeam] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [tab, setTab] = useState('Team Overview');
+  // Only Team Overview's scrum-status table is date-navigable — never wrapped in `new Date(...)`, since
+  // that would shift the selected calendar day by the viewer's local timezone (kept as the plain
+  // YYYY-MM-DD string the date input already produces, straight through to the API).
+  const [selectedDate, setSelectedDate] = useState(todayStr);
   const readOnly = user.role === 'senior_management';
   const canReachAdmin = user.role === 'admin' || user.role === 'super_admin';
 
   function load() {
     setLoadError('');
-    api.get(`/leader/team-today?date=${today}`).then((d) => setTeam(d.team)).catch((e) => setLoadError(e.message || "Couldn't load the team."));
+    api.get(`/leader/team-today?date=${selectedDate}`).then((d) => setTeam(d.team)).catch((e) => setLoadError(e.message || "Couldn't load the team."));
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [selectedDate]);
 
   if (!team) {
     if (loadError) {
@@ -48,7 +54,7 @@ export default function TeamToday() {
         <div>
           <h1 className="text-lg font-bold text-grey-900 flex items-center gap-2">
             <ClipboardList className="w-5 h-5 text-brand-600" />
-            Daily Scrum — {today}
+            Daily Scrum — {selectedDate}
           </h1>
           {team.length > 0 && (
             <p className="text-sm text-grey-500 mt-0.5">
@@ -57,6 +63,20 @@ export default function TeamToday() {
             </p>
           )}
         </div>
+        {tab === 'Team Overview' && (
+          <div className="flex items-center gap-2">
+            <Input
+              type="date"
+              value={selectedDate}
+              max={todayStr}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="!w-auto"
+            />
+            {selectedDate !== todayStr && (
+              <Button size="sm" variant="secondary" onClick={() => setSelectedDate(todayStr)}>Today</Button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-1 bg-grey-100 rounded-xl p-1 w-fit animate-fade-in-up">
@@ -77,7 +97,7 @@ export default function TeamToday() {
       {tab === 'Team Overview' && (
         <Card className="animate-fade-in-up">
           <HelpBanner>
-            This screen shows what each person actually needs, without you asking. <strong>Scrum</strong> shows whether they've confirmed today's commitments yet.{' '}
+            This screen shows what each person actually needs, without you asking. <strong>Scrum</strong> shows whether they've confirmed that day's commitments yet — pick a date above to look back at any past day.{' '}
             <Badge tone="support_required">Delayed</Badge> counts tasks whose due date has passed —{' '}
             calculated automatically from the due date, never entered by hand. <Badge tone="support_required">Support</Badge> shows tasks flagged as needing your help.
           </HelpBanner>
@@ -142,7 +162,7 @@ export default function TeamToday() {
 
       {tab === 'Team Tasks' && (
         <Card className="animate-fade-in-up">
-          <TeamTaskList team={team} readOnly={readOnly} date={today} />
+          <TeamTaskList team={team} readOnly={readOnly} date={todayStr} />
         </Card>
       )}
 

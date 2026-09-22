@@ -171,6 +171,25 @@ test('scrum — resolving a task to Support Required requires a reason', async (
   assert.equal(resolved.request.type, 'support');
 });
 
+test('scrum — confirming your own scrum shows up as "completed" on your leader\'s Team Today, for today only', async () => {
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+
+  const before = await fetch(`${baseUrl}/api/scrum/today`, { headers: authed(reportALogin.token) });
+  assert.equal((await before.json()).session.status, 'pending', 'no session row exists yet, so this must default to pending, not error');
+
+  const confirm = await fetch(`${baseUrl}/api/scrum/confirm`, { method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({}) });
+  assert.equal(confirm.status, 200);
+
+  const after = await fetch(`${baseUrl}/api/scrum/today`, { headers: authed(reportALogin.token) });
+  assert.equal((await after.json()).session.status, 'completed');
+
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const teamToday = await fetch(`${baseUrl}/api/leader/team-today?date=${today()}`, { headers: authed(midLeaderALogin.token) });
+  const { team } = await teamToday.json();
+  const reportARow = team.find((t) => t.employee_id === ids.reportAId);
+  assert.equal(reportARow.scrum_status, 'completed', 'the leader\'s Team Today must reflect the report\'s confirmed scrum for today');
+});
+
 test('scrum — an employee cannot edit another employee\'s task; a leader can', async () => {
   const { body: empLogin } = await login('employee@test.local', 'EmpPass123');
   const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
