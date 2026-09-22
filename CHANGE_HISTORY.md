@@ -307,3 +307,15 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** New tests `import — teams: valid row succeeds, a duplicate name within the same file fails` (rewritten — the old leader_email-based version no longer applies) and `teams — a team's leader is computed from who most members report to, not a stored field` in `server/test/api.integration.test.js`. Full suite: 65/65 passing. `npm run build` clean.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-22
+**Change:** Login page's Email/Password fields now carry standard `name`/`autoComplete` attributes (`username` / `current-password`), so each person's own browser can offer their previously-used email as a suggestion while typing.
+**Reason:** User asked for a dropdown of user emails on the login page to speed up sign-in. Flagged the tradeoff first: that would require a new endpoint serving every user's email to anyone who loads the login page, logged in or not — account enumeration on a list that's otherwise access-controlled (only Leader-tier+ can currently see it, and only once signed in). User agreed to the safer alternative instead.
+**Files:** `client/src/pages/Login.jsx` only.
+**Security:** No new endpoint, no new data exposure — this is a browser-native behavior standard on virtually every login form; nothing server-side changed.
+**Database:** No schema change.
+**Tests:** `npm run build` clean. Actual autofill behavior depends on each browser's own saved form history — nothing to verify server-side or with a fresh test session.
+**Deployment:** Live.
+**Cost:** None.
