@@ -11,8 +11,8 @@ const TABS = [
   ['Users', Users],
   ['Teams', UsersRound],
   ['Task Types', Tag],
-  ['Subtasks', Tags],
-  ['Main Tasks', ListTree],
+  ['Functions', Tags],
+  ['Processes', ListTree],
   ['Activities', ListChecks],
   ['Recurring Tasks', Repeat],
 ];
@@ -47,8 +47,8 @@ export default function Admin() {
         {tab === 'Users' && <UsersTab />}
         {tab === 'Teams' && <TeamsTab />}
         {tab === 'Task Types' && <TaskTypesTab />}
-        {tab === 'Subtasks' && <CategoriesTab />}
-        {tab === 'Main Tasks' && <MainTasksTab />}
+        {tab === 'Functions' && <CategoriesTab />}
+        {tab === 'Processes' && <MainTasksTab />}
         {tab === 'Activities' && <ActivitiesTab />}
         {tab === 'Recurring Tasks' && <RecurringTasksTab />}
       </div>
@@ -221,29 +221,29 @@ function CategoriesTab() {
     <Card>
       <div className="flex items-start justify-between gap-3 mb-3">
         <p className="text-xs text-grey-400">
-          What area of the business a task belongs to — e.g. Finance, Compliance, Operations. Separate from Task Type, which only controls whether work repeats.
+          The top level of the org structure — e.g. Finance, Compliance, Operations. Each Function contains several Processes, which in turn contain Activities. Separate from Task Type, which only controls whether work repeats.
         </p>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <ImportButton
-            entityLabel="Subtasks"
+            entityLabel="Functions"
             headers={['name', 'description']}
             example={{ name: 'Finance', description: 'Accounting and financial reporting tasks' }}
             endpoint="/categories/import"
             onDone={load}
           />
-          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Subtask</Button>
+          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Function</Button>
         </div>
       </div>
-      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Subtask">
+      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Function">
         <div className="space-y-3">
-          <Input label="Subtask name" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input label="Function name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
           <ErrorBanner message={error} />
-          <Button onClick={create}><Plus className="w-4 h-4" /> Add Subtask</Button>
+          <Button onClick={create}><Plus className="w-4 h-4" /> Add Function</Button>
         </div>
       </Modal>
       {items.length === 0 ? (
-        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No subtasks yet">
+        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No Functions yet">
           Add one above to get started.
         </EmptyState>
       ) : (
@@ -291,7 +291,7 @@ function CategoriesTab() {
   );
 }
 
-/* ---------------- Main Tasks (parked under a Category, contain individual Subtasks) ---------------- */
+/* ---------------- Processes (parked under a Function, contain individual Activities) ---------------- */
 function MainTasksTab() {
   const [items, setItems] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -305,7 +305,7 @@ function MainTasksTab() {
 
   function load() {
     setLoadError('');
-    api.get('/main-tasks').then((d) => setItems(d.main_tasks)).catch((e) => setLoadError(e.message || "Couldn't load Main Tasks."));
+    api.get('/main-tasks').then((d) => setItems(d.main_tasks)).catch((e) => setLoadError(e.message || "Couldn't load Processes."));
     api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
   }
   useEffect(() => { load(); }, []);
@@ -313,8 +313,9 @@ function MainTasksTab() {
   async function create() {
     setError('');
     if (!name.trim()) return setError('Name is required.');
+    if (!categoryId) return setError('Choose the Function this Process belongs to.');
     try {
-      await api.post('/main-tasks', { name, category_id: categoryId || null, description });
+      await api.post('/main-tasks', { name, category_id: categoryId, description });
       setName(''); setCategoryId(''); setDescription(''); setFormOpen(false); load();
     } catch (e) { setError(e.message); }
   }
@@ -366,39 +367,39 @@ function MainTasksTab() {
     <Card>
       <div className="flex items-start justify-between gap-3 mb-3">
         <p className="text-xs text-grey-400">
-          A grouping between Subtask and individual tasks — e.g. Subtask "Finance" contains Main Tasks like "FP&A" or "Accounts Payable" (a Finance Head), each of which contains the actual assignable tasks.
+          A grouping between Function and individual Activities — e.g. Function "Finance" contains Processes like "FP&A" or "Accounts Payable", each of which contains the Activities that make up that Process's work.
         </p>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <ImportButton
-            entityLabel="Main Tasks"
+            entityLabel="Processes"
             headers={['name', 'category_name', 'description']}
             example={{ name: 'FP&A', category_name: 'Finance', description: 'Financial Planning & Analysis' }}
             endpoint="/main-tasks/import"
             onDone={load}
           />
-          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Main Task</Button>
+          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Process</Button>
         </div>
       </div>
-      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Main Task">
+      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Process">
         <div className="space-y-3">
-          <Input label="Main Task name" placeholder="e.g. FP&A" value={name} onChange={(e) => setName(e.target.value)} />
-          <Select label="Subtask (optional)" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">No subtask</option>
+          <Input label="Process name" placeholder="e.g. FP&A" value={name} onChange={(e) => setName(e.target.value)} />
+          <Select label="Function" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">Choose a Function…</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
           <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
           <ErrorBanner message={error} />
-          <Button onClick={create}><Plus className="w-4 h-4" /> Add Main Task</Button>
+          <Button onClick={create}><Plus className="w-4 h-4" /> Add Process</Button>
         </div>
       </Modal>
       {items.length === 0 ? (
-        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No Main Tasks yet">
+        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No Processes yet">
           Add one above to get started.
         </EmptyState>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm mt-3">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Main Task</th><th>Subtask</th><th>Status</th><th colSpan={2}></th></tr></thead>
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Process</th><th>Function</th><th>Status</th><th colSpan={2}></th></tr></thead>
             <tbody>
               {items.map((mt, i) => (
                 <tr key={mt.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
@@ -421,7 +422,6 @@ function MainTasksTab() {
                       value={mt.category_id || ''}
                       onChange={(e) => updateCategory(mt, e.target.value)}
                     >
-                      <option value="">No subtask</option>
                       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </td>
@@ -441,13 +441,13 @@ function MainTasksTab() {
   );
 }
 
-/* ---------------- Activities (parked under a Main Task, one level below it) ---------------- */
+/* ---------------- Activities (parked under a Process, one level below it) ---------------- */
 function ActivitiesTab() {
   const [items, setItems] = useState(null);
   const [mainTasks, setMainTasks] = useState([]);
   const [categories, setCategories] = useState([]);
   const [name, setName] = useState('');
-  const [categoryId, setCategoryId] = useState(''); // create-form only, to narrow the Main Task list below — not stored on the Activity itself
+  const [categoryId, setCategoryId] = useState(''); // create-form only, to narrow the Process list below — not stored on the Activity itself
   const [mainTaskId, setMainTaskId] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
@@ -468,8 +468,9 @@ function ActivitiesTab() {
   async function create() {
     setError('');
     if (!name.trim()) return setError('Name is required.');
+    if (!mainTaskId) return setError('Choose the Process this Activity belongs to.');
     try {
-      await api.post('/task-activities', { name, main_task_id: mainTaskId || null, description });
+      await api.post('/task-activities', { name, main_task_id: mainTaskId, description });
       setName(''); setCategoryId(''); setMainTaskId(''); setDescription(''); setFormOpen(false); load();
     } catch (e) { setError(e.message); }
   }
@@ -521,13 +522,13 @@ function ActivitiesTab() {
     <Card>
       <div className="flex items-start justify-between gap-3 mb-3">
         <p className="text-xs text-grey-400">
-          A standard, recurring piece of work under a Main Task — e.g. Main Task "FP&A" contains Activities like "Rolling forecast updates" or "Budget vs Actual variance analysis". Picking one on a task form fills in the description automatically.
+          The type of work under a Process — e.g. Process "FP&A" contains Activities like "Bank Reconciliation" or "GST Return Filing". Activities are a catalog of work TYPES, not the specific task itself — an employee's actual task (e.g. "Complete HDFC Bank Reconciliation for August 2026") is created separately against one of these.
         </p>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <ImportButton
             entityLabel="Activities"
             headers={['name', 'main_task_name', 'description']}
-            example={{ name: 'Rolling forecast updates', main_task_name: 'FP&A', description: '' }}
+            example={{ name: 'Bank Reconciliation', main_task_name: 'FP&A', description: '' }}
             endpoint="/task-activities/import"
             onDone={load}
           />
@@ -536,13 +537,13 @@ function ActivitiesTab() {
       </div>
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Activity">
         <div className="space-y-3">
-          <Input label="Activity name" placeholder="e.g. Rolling forecast updates" value={name} onChange={(e) => setName(e.target.value)} />
-          <Select label="Subtask (to help find the Main Task below)" value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setMainTaskId(''); }}>
-            <option value="">All subtasks</option>
+          <Input label="Activity name" placeholder="e.g. Bank Reconciliation" value={name} onChange={(e) => setName(e.target.value)} />
+          <Select label="Function (to help find the Process below)" value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setMainTaskId(''); }}>
+            <option value="">All Functions</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
-          <Select label="Main Task (optional)" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
-            <option value="">No Main Task</option>
+          <Select label="Process" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
+            <option value="">Choose a Process…</option>
             {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </Select>
           <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -557,7 +558,7 @@ function ActivitiesTab() {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm mt-3">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Activity</th><th>Main Task</th><th>Status</th><th colSpan={2}></th></tr></thead>
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Activity</th><th>Process</th><th>Status</th><th colSpan={2}></th></tr></thead>
             <tbody>
               {items.map((a, i) => (
                 <tr key={a.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
@@ -580,7 +581,6 @@ function ActivitiesTab() {
                       value={a.main_task_id || ''}
                       onChange={(e) => updateMainTask(a, e.target.value)}
                     >
-                      <option value="">No Main Task</option>
                       {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
                   </td>
@@ -1032,6 +1032,8 @@ function RecurringTasksTab() {
   const [mainTaskId, setMainTaskId] = useState('');
   const [taskActivities, setTaskActivities] = useState([]);
   const [taskActivityId, setTaskActivityId] = useState('');
+  const [allUsers, setAllUsers] = useState([]);
+  const [reviewerId, setReviewerId] = useState('');
   const [recurrenceRule, setRecurrenceRule] = useState(DEFAULT_RULE);
   const [priority, setPriority] = useState('Medium');
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
@@ -1054,15 +1056,17 @@ function RecurringTasksTab() {
     api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
     api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => {});
-    api.get('/users').then((d) => setEmployees(d.users.filter((u) => u.role === 'employee' && u.is_active))).catch(() => {});
+    api.get('/users').then((d) => { setAllUsers(d.users); setEmployees(d.users.filter((u) => u.role === 'employee' && u.is_active)); }).catch(() => {});
   }
   useEffect(() => { load(); }, []);
 
-  // A Main Task only makes sense once its own Category is picked, and an Activity only makes sense once
-  // its own Main Task is picked — keeps the Subtask -> Main Task -> Activity nesting something the form
+  // A Process only makes sense once its own Function is picked, and an Activity only makes sense once
+  // its own Process is picked — keeps the Function -> Process -> Activity nesting something the form
   // actually enforces, not just a suggestion.
   const mainTasksForCategory = mainTasks.filter((m) => !categoryId || m.category_id === categoryId);
   const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
+  const selectedActivity = taskActivities.find((a) => a.id === taskActivityId);
+  const reviewers = allUsers.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role) && u.is_active);
   useEffect(() => {
     if (mainTaskId && !mainTasksForCategory.some((m) => m.id === mainTaskId)) setMainTaskId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1072,19 +1076,22 @@ function RecurringTasksTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainTaskId]);
 
-  // Picking an Activity fills in the title automatically (still editable) so a standard, recurring piece
-  // of work doesn't need retyping — matches the same convention as the ad-hoc Create Task form.
-  // Switching to a different Activity updates the title again as long as it's still exactly what the
-  // last Activity auto-filled; the moment someone types their own edit, autoFilledTitle.current no
-  // longer matches and their text is left alone. Same logic as CreateTaskForm's own selectActivity.
-  const autoFilledTitle = useRef(null);
-  function selectActivity(id) {
-    setTaskActivityId(id);
-    const activity = taskActivities.find((a) => a.id === id);
-    if (!activity) return;
-    setTitle((t) => (!t.trim() || t === autoFilledTitle.current) ? activity.name : t);
-    autoFilledTitle.current = activity.name;
-  }
+  // Reviewer defaults to the single assignee's manager when exactly one person is picked (the common
+  // case) — with several assignees at once each may have a different manager, so it's left for the
+  // Admin to choose explicitly rather than guessing one person's manager for everyone.
+  const autoFilledReviewer = useRef(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const defaultReviewer = employeeIds.length === 1 ? (allUsers.find((u) => u.id === employeeIds[0])?.manager_id || '') : '';
+    setReviewerId((r) => (!r || r === autoFilledReviewer.current) ? defaultReviewer : r);
+    autoFilledReviewer.current = defaultReviewer;
+  }, [employeeIds, allUsers]);
+
+  // Activity is a TYPE of work, not the specific task itself (see ActivitiesTab above) — picking one no
+  // longer copies its name into the title. It only shapes the placeholder into a concrete example.
+  const titlePlaceholder = selectedActivity
+    ? `Be specific — e.g. "${selectedActivity.name} for August 2026"`
+    : 'e.g. Daily bank reconciliation';
 
   function toggleEmployee(id) {
     setEmployeeIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
@@ -1093,11 +1100,14 @@ function RecurringTasksTab() {
   async function create() {
     setError('');
     if (!title.trim()) return setError('Please describe the recurring task.');
+    if (!categoryId) return setError('Choose the Function this task belongs to.');
+    if (!mainTaskId) return setError('Choose the Process this task belongs to.');
+    if (!taskActivityId) return setError('Choose the Activity this task belongs to.');
     if (employeeIds.length === 0) return setError('Choose at least one person to assign this to.');
     setSaving(true);
     try {
       await api.post('/recurring-tasks', {
-        title, task_type_id: taskTypeId || null, category_id: categoryId || null, main_task_id: mainTaskId || null, task_activity_id: taskActivityId || null,
+        title, task_type_id: taskTypeId || null, category_id: categoryId, main_task_id: mainTaskId, task_activity_id: taskActivityId, reviewer_id: reviewerId || undefined,
         recurrence_rule: recurrenceRule, priority, start_date: startDate, employee_ids: employeeIds,
       });
       setTitle(''); setCategoryId(''); setMainTaskId(''); setTaskActivityId(''); setEmployeeIds([]); setFormOpen(false);
@@ -1131,8 +1141,8 @@ function RecurringTasksTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <ImportButton
           entityLabel="Recurring Tasks"
-          headers={['title', 'employee_emails', 'task_type_name', 'category_name', 'main_task_name', 'activity_name', 'priority', 'start_date', 'frequency']}
-          example={{ title: 'Daily bank reconciliation', employee_emails: 'jane@company.com;alex@company.com', task_type_name: '', category_name: 'Finance', main_task_name: 'FP&A', activity_name: '', priority: 'Medium', start_date: '2026-09-20', frequency: 'Daily' }}
+          headers={['title', 'employee_emails', 'task_type_name', 'category_name', 'main_task_name', 'activity_name', 'reviewer_email', 'priority', 'start_date', 'frequency']}
+          example={{ title: 'Daily bank reconciliation', employee_emails: 'jane@company.com;alex@company.com', task_type_name: '', category_name: 'Finance', main_task_name: 'FP&A', activity_name: 'Bank Reconciliation', reviewer_email: '', priority: 'Medium', start_date: '2026-09-20', frequency: 'Daily' }}
           endpoint="/recurring-tasks/import"
           onDone={load}
         />
@@ -1144,8 +1154,20 @@ function RecurringTasksTab() {
           and a fresh one lines up automatically on the right day once they mark theirs done.
         </p>
         <div className="grid sm:grid-cols-2 gap-3 mb-3">
-          <Input placeholder="e.g. Daily bank reconciliation" value={title} onChange={(e) => setTitle(e.target.value)} />
-          <Select value={taskTypeId} onChange={(e) => setTaskTypeId(e.target.value)}>
+          <Select label="Function" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">Choose a Function…</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+          <Select label="Process" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
+            <option value="">Choose a Process…</option>
+            {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </Select>
+          <Select label="Activity" value={taskActivityId} onChange={(e) => setTaskActivityId(e.target.value)}>
+            <option value="">Choose an Activity…</option>
+            {activitiesForMainTask.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </Select>
+          <Input label="What is the SPECIFIC task?" placeholder={titlePlaceholder} value={title} onChange={(e) => setTitle(e.target.value)} />
+          <Select label="Type" value={taskTypeId} onChange={(e) => setTaskTypeId(e.target.value)}>
             {recurringTypes.length === 0 && <option value="">No recurring type available</option>}
             {recurringTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </Select>
@@ -1153,17 +1175,9 @@ function RecurringTasksTab() {
             {['Low', 'Medium', 'High'].map((p) => <option key={p} value={p}>{p}</option>)}
           </Select>
           <Input label="Starting" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          <Select label="Subtask (optional)" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">No subtask</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
-          <Select label="Main Task (optional)" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
-            <option value="">No Main Task</option>
-            {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </Select>
-          <Select label="Activity (optional, fills in the title)" value={taskActivityId} onChange={(e) => selectActivity(e.target.value)}>
-            <option value="">No Activity</option>
-            {activitiesForMainTask.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          <Select label="Reviewer" value={reviewerId} onChange={(e) => setReviewerId(e.target.value)}>
+            <option value="">No reviewer</option>
+            {reviewers.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
           </Select>
         </div>
         <div className="mb-3">
@@ -1208,7 +1222,7 @@ function RecurringTasksTab() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Task</th><th>Assigned to</th><th>Type</th><th>Subtask</th><th>Main Task</th><th>Frequency</th><th>Status</th><th></th></tr></thead>
+              <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Task</th><th>Assigned to</th><th>Type</th><th>Function</th><th>Process</th><th>Frequency</th><th>Status</th><th></th></tr></thead>
               <tbody>
                 {items.map((r, i) => (
                   <tr key={r.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>

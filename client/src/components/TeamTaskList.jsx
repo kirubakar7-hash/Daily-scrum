@@ -132,7 +132,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   const selectableTasks = useMemo(() => filteredTasks.filter((t) => !isRowReadOnly(t)), [filteredTasks, readOnly, canActOn]);
 
   function exportCsv() {
-    const header = ['Task', 'Employee', 'Type', 'Subtask', 'Main Task', 'Activity', 'Priority', 'Due', 'Status'];
+    const header = ['Task', 'Employee', 'Type', 'Function', 'Process', 'Activity', 'Priority', 'Due', 'Status'];
     const lines = [header.join(',')].concat(
       filteredTasks.map((t) => [t.description, t.employee_name, t.task_type_name || t.type, t.category_name || '', t.main_task_name || '', t.task_activity_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
     );
@@ -179,8 +179,8 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <ImportButton
               entityLabel="Tasks"
-              headers={['employee_email', 'description', 'task_type_name', 'category_name', 'main_task_name', 'activity_name', 'priority', 'due_date']}
-              example={{ employee_email: 'jane@company.com', description: 'Follow up with Procurement on the approved PR', task_type_name: '', category_name: '', main_task_name: '', activity_name: '', priority: 'Medium', due_date: '' }}
+              headers={['employee_email', 'description', 'task_type_name', 'category_name', 'main_task_name', 'activity_name', 'reviewer_email', 'priority', 'due_date']}
+              example={{ employee_email: 'jane@company.com', description: 'Complete HDFC Bank Reconciliation for August 2026', task_type_name: '', category_name: 'Finance', main_task_name: 'FP&A', activity_name: 'Bank Reconciliation', reviewer_email: '', priority: 'Medium', due_date: '' }}
               endpoint="/scrum/commitments/import"
               onDone={() => load()}
             />
@@ -237,11 +237,11 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
               <option value="adhoc">Ad-hoc</option>
             </Select>
             <Select value={filters.category} onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}>
-              <option value="">All subtasks</option>
+              <option value="">All Functions</option>
               {categoryOptions.map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
             <Select value={filters.mainTask} onChange={(e) => setFilters((f) => ({ ...f, mainTask: e.target.value }))}>
-              <option value="">All main tasks</option>
+              <option value="">All Processes</option>
               {mainTaskOptions.map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
             <Select value={filters.taskActivity} onChange={(e) => setFilters((f) => ({ ...f, taskActivity: e.target.value }))}>
@@ -329,8 +329,8 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                 <th className="py-2 pr-4">Task</th>
                 <th className="py-2 pr-4">Employee</th>
                 <th className="py-2 pr-4">Type</th>
-                <th className="py-2 pr-4">Subtask</th>
-                <th className="py-2 pr-4">Main Task</th>
+                <th className="py-2 pr-4">Function</th>
+                <th className="py-2 pr-4">Process</th>
                 <th className="py-2 pr-4">Priority</th>
                 <th className="py-2 pr-4">Due</th>
                 <th className="py-2 pr-4">Status</th>
@@ -630,6 +630,8 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
   const [mainTaskId, setMainTaskId] = useState('');
   const [taskActivities, setTaskActivities] = useState([]);
   const [taskActivityId, setTaskActivityId] = useState('');
+  const [users, setUsers] = useState([]);
+  const [reviewerId, setReviewerId] = useState('');
   const [recurrenceRule, setRecurrenceRule] = useState(DEFAULT_RULE);
   const [priority, setPriority] = useState('Medium');
   const [dueDate, setDueDate] = useState(today);
@@ -643,15 +645,18 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
       setTaskTypes(active);
       setTaskTypeId((v) => v || active.find((t) => t.mechanic === 'adhoc')?.id || active[0]?.id || '');
     }).catch(() => setLoadError("Couldn't load Task Types — try closing and reopening this form."));
-    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => setLoadError("Couldn't load Subtasks — try closing and reopening this form."));
-    api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => setLoadError("Couldn't load Main Tasks — try closing and reopening this form."));
+    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => setLoadError("Couldn't load Functions — try closing and reopening this form."));
+    api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => setLoadError("Couldn't load Processes — try closing and reopening this form."));
     api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => setLoadError("Couldn't load Activities — try closing and reopening this form."));
+    api.get('/users').then((d) => setUsers(d.users)).catch(() => {});
   }, []);
 
   const selectedType = taskTypes.find((t) => t.id === taskTypeId);
   const isRecurring = selectedType?.mechanic === 'recurring';
   const mainTasksForCategory = mainTasks.filter((m) => !categoryId || m.category_id === categoryId);
   const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
+  const selectedActivity = taskActivities.find((a) => a.id === taskActivityId);
+  const reviewers = users.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role) && u.is_active);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (mainTaskId && !mainTasksForCategory.some((m) => m.id === mainTaskId)) setMainTaskId('');
@@ -661,27 +666,37 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
     if (taskActivityId && !activitiesForMainTask.some((a) => a.id === taskActivityId)) setTaskActivityId('');
   }, [mainTaskId, taskActivities]);
 
-  // Picking an Activity fills in the description automatically (still editable) so a standard, recurring
-  // piece of work doesn't need retyping every time. Switching to a different Activity updates the
-  // description again as long as it's still exactly what the last Activity auto-filled — the moment
-  // someone types their own edit, autoFilledValue.current no longer matches and their text is left alone.
-  const autoFilledValue = useRef(null);
-  function selectActivity(id) {
-    setTaskActivityId(id);
-    const activity = taskActivities.find((a) => a.id === id);
-    if (!activity) return;
-    setDescription((d) => (!d.trim() || d === autoFilledValue.current) ? activity.name : d);
-    autoFilledValue.current = activity.name;
-  }
+  // Reviewer defaults to whoever this employee reports to (their manager, from the org hierarchy) —
+  // still editable, and only re-defaulted on an employee switch if it's untouched since the last
+  // default, same "untouched auto-fill" convention as the description placeholder below.
+  const autoFilledReviewer = useRef(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const emp = users.find((u) => u.id === employeeId);
+    const defaultReviewer = emp?.manager_id || '';
+    setReviewerId((r) => (!r || r === autoFilledReviewer.current) ? defaultReviewer : r);
+    autoFilledReviewer.current = defaultReviewer;
+  }, [employeeId, users]);
+
+  // Activity is a TYPE of work (e.g. "Bank Reconciliation"), not the specific task itself — so picking
+  // one no longer copies its name into the description. Instead it shapes the placeholder into a
+  // concrete example, nudging toward something specific like "Bank Reconciliation for August 2026"
+  // rather than leaving the Activity's bare catalog name as the actual task description.
+  const descriptionPlaceholder = selectedActivity
+    ? `Be specific — e.g. "${selectedActivity.name} for August 2026"`
+    : 'e.g. Follow up with Procurement on the approved PR';
 
   async function create() {
     setError('');
     if (!employeeId) return setError('Choose who this task is for.');
     if (!description.trim()) return setError('Please describe the task.');
+    if (!categoryId) return setError('Choose the Function this task belongs to.');
+    if (!mainTaskId) return setError('Choose the Process this task belongs to.');
+    if (!taskActivityId) return setError('Choose the Activity this task belongs to.');
     setSaving(true);
     try {
       await api.post('/scrum/commitments', {
-        employee_id: employeeId, description, task_type_id: taskTypeId || undefined, category_id: categoryId || undefined, main_task_id: mainTaskId || undefined, task_activity_id: taskActivityId || undefined, priority, due_date: dueDate,
+        employee_id: employeeId, description, task_type_id: taskTypeId || undefined, category_id: categoryId, main_task_id: mainTaskId, task_activity_id: taskActivityId, reviewer_id: reviewerId || undefined, priority, due_date: dueDate,
         recurrence_rule: isRecurring ? recurrenceRule : undefined,
       });
       setDescription(''); setCategoryId(''); setMainTaskId(''); setTaskActivityId('');
@@ -708,25 +723,37 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
         )}
         <Input label="Due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
       </div>
-      <Textarea required label="Task description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Follow up with Procurement on the approved PR" />
-      <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <Select label="Function" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+          <option value="">Choose a Function…</option>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </Select>
+        <Select label="Process" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
+          <option value="">Choose a Process…</option>
+          {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </Select>
+        <Select label="Activity" value={taskActivityId} onChange={(e) => setTaskActivityId(e.target.value)}>
+          <option value="">Choose an Activity…</option>
+          {activitiesForMainTask.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </Select>
+      </div>
+      <Textarea
+        required
+        label="What is the SPECIFIC task? (an Activity is a type of work — say exactly what needs doing)"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder={descriptionPlaceholder}
+      />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Select label="Type" value={taskTypeId} onChange={(e) => setTaskTypeId(e.target.value)}>
           {taskTypes.map((t) => <option key={t.id} value={t.id}>{t.name}{t.mechanic === 'recurring' ? ' (repeats)' : ''}</option>)}
         </Select>
-        <Select label="Subtask" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-          <option value="">None</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
-        <Select label="Main Task" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
-          <option value="">None</option>
-          {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </Select>
-        <Select label="Activity" value={taskActivityId} onChange={(e) => selectActivity(e.target.value)}>
-          <option value="">None</option>
-          {activitiesForMainTask.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </Select>
         <Select label={<>Priority<InfoTip term="priority" /></>} value={priority} onChange={(e) => setPriority(e.target.value)}>
           {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+        </Select>
+        <Select label="Reviewer" value={reviewerId} onChange={(e) => setReviewerId(e.target.value)}>
+          <option value="">No reviewer</option>
+          {reviewers.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
         </Select>
       </div>
       {isRecurring && <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} />}

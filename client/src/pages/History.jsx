@@ -149,12 +149,12 @@ export default function History() {
                 <option value="support_required">Support Required</option>
                 <option value="overdue">Overdue</option>
               </Select>
-              <Select label="Subtask" value={filters.category_id} onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}>
-                <option value="">All subtasks</option>
+              <Select label="Function" value={filters.category_id} onChange={(e) => setFilters((f) => ({ ...f, category_id: e.target.value }))}>
+                <option value="">All Functions</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </Select>
-              <Select label="Main Task" value={filters.main_task_id} onChange={(e) => setFilters((f) => ({ ...f, main_task_id: e.target.value }))}>
-                <option value="">All main tasks</option>
+              <Select label="Process" value={filters.main_task_id} onChange={(e) => setFilters((f) => ({ ...f, main_task_id: e.target.value }))}>
+                <option value="">All Processes</option>
                 {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </Select>
               <Select label="Activity" value={filters.task_activity_id} onChange={(e) => setFilters((f) => ({ ...f, task_activity_id: e.target.value }))}>
@@ -255,9 +255,10 @@ export default function History() {
                       <th className="pr-3 font-semibold">Employee</th>
                       <th className="pr-3 font-semibold">Task</th>
                       <th className="pr-3 font-semibold">Type</th>
-                      <th className="pr-3 font-semibold">Subtask</th>
-                      <th className="pr-3 font-semibold">Main Task</th>
+                      <th className="pr-3 font-semibold">Function</th>
+                      <th className="pr-3 font-semibold">Process</th>
                       <th className="pr-3 font-semibold">Activity</th>
+                      <th className="pr-3 font-semibold">Reviewer</th>
                       <th className="pr-3 font-semibold">Status</th>
                       <th className="pr-3 font-semibold">Completed</th>
                       <th className="pr-3 font-semibold">Notes</th>
@@ -274,6 +275,7 @@ export default function History() {
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.category_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.main_task_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.task_activity_name || <span className="text-grey-300">—</span>}</td>
+                        <td className="pr-3 whitespace-nowrap text-grey-600">{c.reviewer_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3"><Badge tone={c.status}>{humanize(c.status)}</Badge></td>
                         <td className="pr-3 whitespace-nowrap text-grey-500">{c.completed_at ? c.completed_at.slice(0, 10) : <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 max-w-[220px]">
