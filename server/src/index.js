@@ -20,6 +20,7 @@ import recurringTaskRoutes from './routes/recurringTasks.js';
 import categoryRoutes from './routes/categories.js';
 import mainTaskRoutes from './routes/mainTasks.js';
 import requestRoutes from './routes/requests.js';
+import cronRoutes from './routes/cron.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -65,6 +66,7 @@ app.use('/api/recurring-tasks', recurringTaskRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/main-tasks', mainTaskRoutes);
 app.use('/api/requests', requestRoutes);
+app.use('/api/cron', cronRoutes);
 
 // In production this same server also serves the built React app, so the whole thing is one deployable
 // unit with one URL. Locally, the frontend runs separately via Vite's own dev server instead, and this

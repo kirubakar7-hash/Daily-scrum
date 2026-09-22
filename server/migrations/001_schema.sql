@@ -249,6 +249,15 @@ CREATE INDEX IF NOT EXISTS idx_commitments_status_due ON commitments(status, due
 CREATE INDEX IF NOT EXISTS idx_commitments_category ON commitments(category_id);
 CREATE INDEX IF NOT EXISTS idx_commitments_task_type ON commitments(task_type_id);
 CREATE INDEX IF NOT EXISTS idx_commitments_recurring_activity ON commitments(recurring_activity_id);
+-- Two independent triggers can generate a recurring series' next occurrence (an employee completing the
+-- current one, or the nightly schedule sweep in cron.js catching up a stalled series) — a race between
+-- them reading "nothing exists yet for this date" at the same moment is possible even with an application-
+-- level check, since that check and the insert aren't atomic across two separate connections. This index
+-- is the actual guarantee against a duplicate occurrence, not the application check, which is only a
+-- fast path. Partial (recurring_activity_id IS NOT NULL) — adhoc tasks never populate that column at all.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_recurring_due_unique
+  ON commitments(recurring_activity_id, due_date)
+  WHERE recurring_activity_id IS NOT NULL AND is_active = 1;
 CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);
 CREATE INDEX IF NOT EXISTS idx_users_manager ON users(manager_id);
 CREATE INDEX IF NOT EXISTS idx_requests_requested_by ON requests(requested_by);

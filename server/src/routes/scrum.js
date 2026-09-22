@@ -6,6 +6,7 @@ import { recordAudit, auditDiff } from '../lib/audit.js';
 import { canViewEmployee, canActOnEmployee, isReadOnly } from '../lib/scope.js';
 import { withDelay, withLateness } from '../lib/delay.js';
 import { nextOccurrence, describeRule, validateRule, legacyFrequencyToRule } from '../lib/recurrence.js';
+import { insertOccurrence } from '../lib/recurringOccurrences.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 
 const router = Router();
@@ -415,27 +416,9 @@ router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
         if (already) {
           nextTask = already;
         } else {
-          // Insert-then-increment as one atomic step, so a crash between the two can't leave the next
-          // occurrence created but occurrences_created stale, or vice versa.
-          const newId = uuid();
-          await db.transaction(async () => {
-            await db.prepare(`
-              INSERT INTO commitments (
-                id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, priority, expected_outcome,
-                start_date, due_date, original_due_date, estimated_effort, dependency, dependency_owner, created_by, updated_by
-              ) VALUES (?, ?, ?, ?, 'recurring', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              newId, before.employee_id, nextDate, before.description, activity.id, before.task_type_id, before.category_id, before.main_task_id, before.priority, before.expected_outcome || null,
-              nextDate, nextDate, nextDate, before.estimated_effort || null, before.dependency || null, before.dependency_owner || null,
-              req.user.id, req.user.id
-            );
-            await db.prepare('UPDATE recurring_activities SET occurrences_created = occurrences_created + 1 WHERE id = ?').run(activity.id);
-          });
-          nextTask = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(newId);
-          await recordAudit({
-            tableName: 'commitments', recordId: newId, fieldName: 'created', newValue: before.description,
+          nextTask = await insertOccurrence({
+            activity, dueDate: nextDate, template: before,
             changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Next occurrence of the recurring series',
-            ownerId: before.employee_id, ownerName: await employeeName(before.employee_id),
           });
         }
       }
