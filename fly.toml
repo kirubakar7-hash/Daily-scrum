@@ -1,7 +1,10 @@
-# Fly.io app configuration. `fly launch` will ask you to confirm/rename the app and pick a
-# region the first time you run it — this file just gives it sensible starting values.
-# Real secrets (JWT_SECRET) are NOT set here — see DEPLOY.md, they're set with `fly secrets set`
-# instead, which Fly stores encrypted rather than in this plain-text file.
+# Fly.io app configuration — an alternative/reference deployment path; the app's actual production
+# deployment today is Vercel + Neon Postgres (see DEPLOY.md). `fly launch` will ask you to confirm/rename
+# the app and pick a region the first time you run it — this file just gives it sensible starting values.
+# Real secrets (JWT_SECRET, DATABASE_URL) are NOT set here — see DEPLOY.md, they're set with
+# `fly secrets set` instead, which Fly stores encrypted rather than in this plain-text file. The app now
+# runs entirely on PostgreSQL (server/src/db.js requires DATABASE_URL) — there is no local SQLite file or
+# volume to mount anymore, unlike this file's original SQLite-era version.
 
 app = "daily-scrum-monitoring"      # must be globally unique on Fly — change if it's taken
 primary_region = "sin"              # pick whichever Fly region (`fly platform regions`) is closest to your team
@@ -11,11 +14,6 @@ primary_region = "sin"              # pick whichever Fly region (`fly platform r
 [env]
   NODE_ENV = "production"
   PORT = "4000"
-  DB_PATH = "/data/scrum.db"
-
-[[mounts]]
-  source = "scrum_data"              # the persistent volume — created once with `fly volumes create`
-  destination = "/data"
 
 [http_service]
   internal_port = 4000

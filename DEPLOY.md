@@ -53,12 +53,12 @@ fly launch --no-deploy --copy-config --yes
 If it says the name `daily-scrum-monitoring` is already taken by someone else, open
 `fly.toml` and change the `app = "..."` line to something else, then run the command again.
 
-**4. Create the permanent storage** for your data (so it survives restarts). Match the
-region to whatever `fly.toml` says under `primary_region` (it's set to `sin` = Singapore by
-default — change both if you'd rather use a region closer to your team, see `fly platform regions`):
+**4. Point it at a real PostgreSQL database** — the app no longer uses a local file, so there's
+no volume to create here. Get a free connection string from [neon.com](https://neon.com) (or
+any PostgreSQL host) and set it on Fly (this is stored encrypted, not in any file):
 
 ```bash
-fly volumes create scrum_data --region sin --size 1
+fly secrets set DATABASE_URL=paste-your-postgres-connection-string-here
 ```
 
 **5. Generate a real login secret** (this replaces the placeholder the code uses for local
@@ -68,7 +68,7 @@ testing — it's what keeps people from forging a login):
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-Copy the long string it prints, then set it on Fly (this is stored encrypted, not in any file):
+Copy the long string it prints, then set it on Fly the same way:
 
 ```bash
 fly secrets set JWT_SECRET=paste-the-long-string-here
@@ -93,26 +93,11 @@ any time — not just while your computer is on.
 
 ## Bringing your existing data across (optional)
 
-The volume you just created starts empty — a fresh install would need you to log in as
-Super Admin and rebuild your teams/people from scratch. If you'd rather keep what's
-already in `server\data\scrum.db` (your real users, teams, categories, history), copy it
-up after the first deploy:
-
-```bash
-fly ssh sftp shell
-```
-
-Then, inside that prompt:
-
-```
-put server/data/scrum.db /data/scrum.db
-```
-
-Then restart the app so it picks up the file:
-
-```bash
-fly apps restart daily-scrum-monitoring
-```
+A brand-new Postgres database starts empty — a fresh install would need you to log in as
+Super Admin and rebuild your teams/people from scratch. If you'd rather keep what's already
+in an existing database (your real users, teams, categories, history), point `DATABASE_URL`
+at that same database instead of a new one — there's no file to copy, since PostgreSQL is a
+network database your app connects to, not a local file this machine holds.
 
 ---
 
@@ -132,9 +117,9 @@ from this folder again. Your data on the volume is untouched by a redeploy.
 
 - The server now also serves the built frontend, so the whole app is one deployable thing
   with one address (`server/src/index.js`).
-- The database location, the port, and the login secret are now all configurable via
-  environment variables instead of being hardcoded — `DB_PATH`, `PORT`, `JWT_SECRET`,
-  `CORS_ORIGIN` (see `.env.example` for what each one does).
+- The database, the port, and the login secret are now all configurable via environment
+  variables instead of being hardcoded — `DATABASE_URL`, `PORT`, `JWT_SECRET`, `CORS_ORIGIN`
+  (see `.env.example` for what each one does).
 - The server refuses to start in production if `JWT_SECRET` is still the local-dev
   placeholder, so this can't accidentally go live insecurely. `CORS_ORIGIN` is different: it's
   only relevant if the frontend is ever split onto a separate domain from the API, so it's
