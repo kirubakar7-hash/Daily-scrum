@@ -521,15 +521,9 @@ test('task activities — a task tagged with an Activity carries it through, can
   assert.equal(blockedDelete.status, 409, 'an Activity already used by a task must be blocked from deletion, like Main Task/Category/Task Type');
 });
 
-test('finance structure — a task cannot be created without Function, Process, and Activity', async () => {
+test('finance structure — a task cannot be created without Process and Activity', async () => {
   const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
   const headers = authed(saLogin.token);
-
-  const noCategory = await fetch(`${baseUrl}/api/scrum/commitments`, {
-    method: 'POST', headers, body: JSON.stringify({ employee_id: ids.employeeId, description: 'Missing Function', type: 'adhoc', due_date: '2026-09-25' }),
-  });
-  assert.equal(noCategory.status, 400);
-  assert.match((await noCategory.json()).error, /function/i);
 
   const noMainTask = await fetch(`${baseUrl}/api/scrum/commitments`, {
     method: 'POST', headers, body: JSON.stringify({
@@ -547,6 +541,41 @@ test('finance structure — a task cannot be created without Function, Process, 
   });
   assert.equal(noActivity.status, 400);
   assert.match((await noActivity.json()).error, /activity/i);
+});
+
+test('finance structure — Function is no longer asked for: auto-resolved when exactly one is active, still a real required choice if more than one is', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const headers = authed(saLogin.token);
+
+  // Snapshot every OTHER category's current is_active so it can be restored exactly, regardless of what
+  // earlier tests left behind — this test must never permanently change global fixture state for tests
+  // that run after it.
+  const others = await db.prepare(`SELECT id, is_active FROM categories WHERE id != ?`).all(ids.fixtureCategoryId);
+  await db.prepare(`UPDATE categories SET is_active = 0 WHERE id != ?`).run(ids.fixtureCategoryId);
+  try {
+    const autoResolved = await fetch(`${baseUrl}/api/scrum/commitments`, {
+      method: 'POST', headers, body: JSON.stringify({
+        employee_id: ids.employeeId, description: 'Auto-resolved Function', type: 'adhoc', due_date: '2026-09-25',
+        main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+      }),
+    });
+    assert.equal(autoResolved.status, 201, 'omitting Function must succeed when exactly one Function is active');
+    const { commitment } = await autoResolved.json();
+    assert.equal(commitment.category_id, ids.fixtureCategoryId, 'must auto-resolve to the single active Function, not leave it null');
+  } finally {
+    for (const o of others) await db.prepare(`UPDATE categories SET is_active = ? WHERE id = ?`).run(o.is_active, o.id);
+  }
+
+  // With more than one Function active again (restored above), auto-resolving would be a real guess —
+  // the original required-field error must come back instead of silently picking one.
+  const ambiguous = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({
+      employee_id: ids.employeeId, description: 'Ambiguous Function', type: 'adhoc', due_date: '2026-09-25',
+      main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
+  });
+  assert.equal(ambiguous.status, 400, 'omitting Function must still fail once more than one Function exists');
+  assert.match((await ambiguous.json()).error, /function/i);
 });
 
 test('finance structure — Reviewer defaults to the employee\'s manager but can be overridden, and a Function/Process cannot be deleted while a child record is parked under it', async () => {
