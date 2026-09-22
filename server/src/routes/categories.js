@@ -90,8 +90,16 @@ router.delete('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (r
 
   const usedCount = (await db.prepare('SELECT COUNT(*) c FROM commitments WHERE category_id = ?').get(req.params.id)).c;
   const templateCount = (await db.prepare('SELECT COUNT(*) c FROM recurring_activities WHERE category_id = ?').get(req.params.id)).c;
-  if (usedCount > 0 || templateCount > 0) {
-    const parts = [usedCount > 0 && `${usedCount} task(s)`, templateCount > 0 && `${templateCount} recurring template(s)`].filter(Boolean);
+  // A Function with Processes still parked under it can't be deleted either — a Process must always
+  // belong to a Function, so removing the parent here would either orphan them or hit a raw foreign-key
+  // error instead of this friendly one.
+  const mainTaskCount = (await db.prepare('SELECT COUNT(*) c FROM main_tasks WHERE category_id = ?').get(req.params.id)).c;
+  if (usedCount > 0 || templateCount > 0 || mainTaskCount > 0) {
+    const parts = [
+      usedCount > 0 && `${usedCount} task(s)`,
+      templateCount > 0 && `${templateCount} recurring template(s)`,
+      mainTaskCount > 0 && `${mainTaskCount} Process(es)`,
+    ].filter(Boolean);
     return res.status(409).json({ error: `${parts.join(' and ')} already use this subtask. Deactivate it instead of deleting it.` });
   }
 

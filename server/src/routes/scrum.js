@@ -136,28 +136,36 @@ router.post('/commitments', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Priority must be Low, Medium, or High.' });
   }
 
-  // Category is optional and independent of Type — it answers "what area of the business is this for"
-  // (e.g. Finance, Compliance), not whether the task repeats.
-  let categoryId = b.category_id || null;
-  if (categoryId) {
-    const chosenCategory = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
-    if (!chosenCategory) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
-  }
+  // Function → Process → Activity is required on every actual task — it answers "what area of the
+  // business is this for, and what type of work is it" (e.g. Finance → FP&A → Bank Reconciliation),
+  // not whether the task repeats. The master-data catalog itself enforces the same nesting (see
+  // mainTasks.js/taskActivities.js), so a task can never point at an orphaned Process or Activity.
+  const categoryId = b.category_id || null;
+  if (!categoryId) return res.status(400).json({ error: 'Choose the Function this task belongs to.' });
+  const chosenCategory = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
+  if (!chosenCategory) return res.status(400).json({ error: 'That Function is no longer available. Choose another.' });
 
-  // Main Task sits one level under Category (Category "Finance" → Main Task "FP&A" → this task) — same
-  // optional/independent treatment as Category itself.
-  let mainTaskId = b.main_task_id || null;
-  if (mainTaskId) {
-    const chosenMainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(mainTaskId);
-    if (!chosenMainTask) return res.status(400).json({ error: 'That Main Task is no longer available. Choose another.' });
-  }
+  const mainTaskId = b.main_task_id || null;
+  if (!mainTaskId) return res.status(400).json({ error: 'Choose the Process this task belongs to.' });
+  const chosenMainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(mainTaskId);
+  if (!chosenMainTask) return res.status(400).json({ error: 'That Process is no longer available. Choose another.' });
 
-  // Activity sits one level under Main Task (Main Task "FP&A" → Activity "Rolling forecast updates") —
-  // same optional/independent treatment as Category and Main Task.
-  let taskActivityId = b.task_activity_id || null;
-  if (taskActivityId) {
-    const chosenActivity = await db.prepare('SELECT id FROM task_activities WHERE id = ? AND is_active = 1').get(taskActivityId);
-    if (!chosenActivity) return res.status(400).json({ error: 'That Activity is no longer available. Choose another.' });
+  const taskActivityId = b.task_activity_id || null;
+  if (!taskActivityId) return res.status(400).json({ error: 'Choose the Activity this task belongs to.' });
+  const chosenActivity = await db.prepare('SELECT id FROM task_activities WHERE id = ? AND is_active = 1').get(taskActivityId);
+  if (!chosenActivity) return res.status(400).json({ error: 'That Activity is no longer available. Choose another.' });
+
+  // Reviewer is optional and free-standing (not part of the Function/Process/Activity nesting) — who
+  // signs off on this employee's work, defaulting to their manager from the org hierarchy (see scope.js)
+  // when the caller doesn't name one explicitly.
+  let reviewerId = b.reviewer_id;
+  if (reviewerId === undefined) {
+    reviewerId = (await db.prepare('SELECT manager_id FROM users WHERE id = ?').get(employeeId))?.manager_id || null;
+  } else if (reviewerId) {
+    const chosenReviewer = await db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(reviewerId);
+    if (!chosenReviewer) return res.status(400).json({ error: 'That reviewer is no longer available. Choose another.' });
+  } else {
+    reviewerId = null;
   }
 
   // The recurrence rule can arrive as a full { interval, unit, weekdays, end } object (the calendar-style
@@ -181,9 +189,9 @@ router.post('/commitments', asyncHandler(async (req, res) => {
       recurringActivityId = uuid();
       const seriesStart = b.due_date || b.scrum_date || today();
       await db.prepare(`
-        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, task_activity_id, priority, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(recurringActivityId, employeeId, b.description.trim(), describeRule(rule), JSON.stringify(rule), seriesStart, taskTypeId, categoryId, mainTaskId, taskActivityId, b.priority || 'Medium', req.user.id);
+        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(recurringActivityId, employeeId, b.description.trim(), describeRule(rule), JSON.stringify(rule), seriesStart, taskTypeId, categoryId, mainTaskId, taskActivityId, reviewerId, b.priority || 'Medium', req.user.id);
     }
   }
 
@@ -192,11 +200,11 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   const dueDate = b.due_date || date;
   await db.prepare(`
     INSERT INTO commitments (
-      id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, priority, expected_outcome,
+      id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority, expected_outcome,
       start_date, due_date, original_due_date, due_time, estimated_effort, dependency, dependency_owner, remarks, created_by, updated_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    id, employeeId, date, b.description.trim(), type, recurringActivityId, taskTypeId, categoryId, mainTaskId, taskActivityId, b.priority || 'Medium', b.expected_outcome || null,
+    id, employeeId, date, b.description.trim(), type, recurringActivityId, taskTypeId, categoryId, mainTaskId, taskActivityId, reviewerId, b.priority || 'Medium', b.expected_outcome || null,
     b.start_date || date, dueDate, dueDate, b.due_time || null, b.estimated_effort || null, b.dependency || null,
     b.dependency_owner || null, b.remarks || null, req.user.id, req.user.id
   );
@@ -251,25 +259,28 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
         task_type_id = chosenType.id;
       }
 
-      let category_id = null;
       const categoryName = (r.category_name || '').trim();
-      if (categoryName) {
-        category_id = categoryByName.get(categoryName.toLowerCase());
-        if (!category_id) throw new Error(`Subtask "${categoryName}" was not found.`);
-      }
+      if (!categoryName) throw new Error('category_name is required — every task must belong to a Function.');
+      const category_id = categoryByName.get(categoryName.toLowerCase());
+      if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
 
-      let main_task_id = null;
       const mainTaskName = (r.main_task_name || '').trim();
-      if (mainTaskName) {
-        main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
-        if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found.`);
-      }
+      if (!mainTaskName) throw new Error('main_task_name is required — every task must belong to a Process.');
+      const main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
+      if (!main_task_id) throw new Error(`Process "${mainTaskName}" was not found.`);
 
-      let task_activity_id = null;
       const activityName = (r.activity_name || '').trim();
-      if (activityName) {
-        task_activity_id = activityByName.get(activityName.toLowerCase());
-        if (!task_activity_id) throw new Error(`Activity "${activityName}" was not found.`);
+      if (!activityName) throw new Error('activity_name is required — every task must belong to an Activity.');
+      const task_activity_id = activityByName.get(activityName.toLowerCase());
+      if (!task_activity_id) throw new Error(`Activity "${activityName}" was not found.`);
+
+      let reviewer_id = null;
+      const reviewerEmail = (r.reviewer_email || '').trim();
+      if (reviewerEmail) {
+        reviewer_id = userByEmail.get(reviewerEmail.toLowerCase());
+        if (!reviewer_id) throw new Error(`No user found with reviewer email "${reviewerEmail}".`);
+      } else {
+        reviewer_id = (await db.prepare('SELECT manager_id FROM users WHERE id = ?').get(employeeId))?.manager_id || null;
       }
 
       const priority = (r.priority || '').trim() || 'Medium';
@@ -280,10 +291,10 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       const id = uuid();
       await db.prepare(`
         INSERT INTO commitments (
-          id, employee_id, scrum_date, description, type, task_type_id, category_id, main_task_id, task_activity_id, priority,
+          id, employee_id, scrum_date, description, type, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority,
           start_date, due_date, original_due_date, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, 'adhoc', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, employeeId, dueDate, description, task_type_id, category_id, main_task_id, task_activity_id, priority, dueDate, dueDate, dueDate, req.user.id, req.user.id);
+        ) VALUES (?, ?, ?, ?, 'adhoc', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, employeeId, dueDate, description, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority, dueDate, dueDate, dueDate, req.user.id, req.user.id);
       await recordAudit({
         tableName: 'commitments', recordId: id, fieldName: 'created', newValue: description,
         changedBy: req.user.id, changedByName: req.user.full_name, reason: 'Bulk import',
@@ -469,6 +480,15 @@ router.patch('/commitments/:id', asyncHandler(async (req, res) => {
   const fields = ['description', 'priority', 'expected_outcome', 'due_date', 'due_time', 'estimated_effort', 'dependency', 'dependency_owner', 'remarks'];
   const after = { ...before };
   for (const f of fields) if (req.body?.[f] !== undefined) after[f] = req.body[f];
+  // Reviewer, unlike Function/Process/Activity, can be reassigned or cleared after creation — it's who
+  // signs off on the work, not part of the master-data nesting those three fields enforce.
+  if (req.body?.reviewer_id !== undefined) {
+    if (req.body.reviewer_id) {
+      const chosenReviewer = await db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(req.body.reviewer_id);
+      if (!chosenReviewer) return res.status(400).json({ error: 'That reviewer is no longer available. Choose another.' });
+    }
+    after.reviewer_id = req.body.reviewer_id || null;
+  }
   // A due-date change made through this general-purpose edit must reset a resolved task's status the
   // same way the dedicated carry-forward endpoint does — otherwise a task can end up shown as Completed
   // or Support Required with a due date that's silently moved out from under it.
@@ -476,9 +496,9 @@ router.patch('/commitments/:id', asyncHandler(async (req, res) => {
     after.status = 'pending';
   }
   await db.prepare(`
-    UPDATE commitments SET description=?, priority=?, expected_outcome=?, due_date=?, due_time=?, estimated_effort=?, dependency=?, dependency_owner=?, remarks=?, status=?, updated_at=datetime('now'), updated_by=?
+    UPDATE commitments SET description=?, priority=?, expected_outcome=?, due_date=?, due_time=?, estimated_effort=?, dependency=?, dependency_owner=?, remarks=?, status=?, reviewer_id=?, updated_at=datetime('now'), updated_by=?
     WHERE id=?
-  `).run(after.description, after.priority, after.expected_outcome, after.due_date, after.due_time, after.estimated_effort, after.dependency, after.dependency_owner, after.remarks, after.status, req.user.id, before.id);
+  `).run(after.description, after.priority, after.expected_outcome, after.due_date, after.due_time, after.estimated_effort, after.dependency, after.dependency_owner, after.remarks, after.status, after.reviewer_id, req.user.id, before.id);
   await auditDiff({
     tableName: 'commitments', recordId: before.id, before, after, changedBy: req.user.id, changedByName: req.user.full_name, reason: req.body?.reason,
     ownerId: before.employee_id, ownerName: await employeeName(before.employee_id),

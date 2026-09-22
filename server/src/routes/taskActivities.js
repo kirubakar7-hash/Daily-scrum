@@ -22,14 +22,15 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ task_activities: rows });
 }));
 
-/** POST /api/task-activities — Admin defines a new Activity, optionally parked under a Main Task. */
+/** POST /api/task-activities — Admin defines a new Activity, parked under a Main Task (Process).
+ *  main_task_id is required — an Activity must always belong to a Process, so History/reporting can
+ *  never show an Activity floating without one. */
 router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const { name, main_task_id, description } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Activity name is required.' });
-  if (main_task_id) {
-    const mainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(main_task_id);
-    if (!mainTask) return res.status(400).json({ error: 'That Main Task is no longer available. Choose another.' });
-  }
+  if (!main_task_id) return res.status(400).json({ error: 'Choose the Process this Activity belongs to.' });
+  const mainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(main_task_id);
+  if (!mainTask) return res.status(400).json({ error: 'That Main Task is no longer available. Choose another.' });
   const id = uuid();
   try {
     await db.prepare(`INSERT INTO task_activities (id, name, main_task_id, description, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?)`)
@@ -60,11 +61,9 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
       const mainTaskName = (r.main_task_name || '').trim();
       if (!name) throw new Error('Activity name is required.');
       if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate Activity name within this file.');
-      let main_task_id = null;
-      if (mainTaskName) {
-        main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
-        if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found.`);
-      }
+      if (!mainTaskName) throw new Error('main_task_name is required — every Activity must belong to a Process.');
+      const main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
+      if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found.`);
 
       const id = uuid();
       try {
@@ -91,7 +90,8 @@ router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (re
   if (!before) return res.status(404).json({ error: 'Activity not found.' });
   const { name, main_task_id, description, is_active, reason } = req.body || {};
   if (name !== undefined && !name.trim()) return res.status(400).json({ error: 'Activity name is required.' });
-  if (main_task_id !== undefined && main_task_id) {
+  if (main_task_id !== undefined) {
+    if (!main_task_id) return res.status(400).json({ error: 'An Activity must always belong to a Process — choose one instead of clearing it.' });
     const mainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(main_task_id);
     if (!mainTask) return res.status(400).json({ error: 'That Main Task is no longer available. Choose another.' });
   }

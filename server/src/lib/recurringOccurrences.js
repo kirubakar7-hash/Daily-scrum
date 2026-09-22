@@ -21,11 +21,11 @@ export async function insertOccurrence({ activity, dueDate, template, changedBy,
     await db.transaction(async () => {
       await db.prepare(`
         INSERT INTO commitments (
-          id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, priority, expected_outcome,
+          id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority, expected_outcome,
           start_date, due_date, original_due_date, estimated_effort, dependency, dependency_owner, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, 'recurring', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'recurring', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        newId, template.employee_id, dueDate, template.description, activity.id, template.task_type_id, template.category_id, template.main_task_id, template.task_activity_id, template.priority, template.expected_outcome || null,
+        newId, template.employee_id, dueDate, template.description, activity.id, template.task_type_id, template.category_id, template.main_task_id, template.task_activity_id, template.reviewer_id, template.priority, template.expected_outcome || null,
         dueDate, dueDate, dueDate, template.estimated_effort || null, template.dependency || null, template.dependency_owner || null,
         changedBy, changedBy
       );

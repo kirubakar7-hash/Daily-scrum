@@ -21,14 +21,15 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ main_tasks: rows });
 }));
 
-/** POST /api/main-tasks — Admin defines a new Main Task, optionally parked under a Category. */
+/** POST /api/main-tasks — Admin defines a new Main Task (Process), parked under a Category (Function).
+ *  category_id is required — a Process must always belong to a Function, so History/reporting can never
+ *  show a Process floating without one. */
 router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const { name, category_id, description } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Main Task name is required.' });
-  if (category_id) {
-    const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(category_id);
-    if (!category) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
-  }
+  if (!category_id) return res.status(400).json({ error: 'Choose the Function this Process belongs to.' });
+  const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(category_id);
+  if (!category) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
   const id = uuid();
   try {
     await db.prepare(`INSERT INTO main_tasks (id, name, category_id, description, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?)`)
@@ -59,11 +60,9 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
       const categoryName = (r.category_name || '').trim();
       if (!name) throw new Error('Main Task name is required.');
       if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate Main Task name within this file.');
-      let category_id = null;
-      if (categoryName) {
-        category_id = categoryByName.get(categoryName.toLowerCase());
-        if (!category_id) throw new Error(`Subtask "${categoryName}" was not found.`);
-      }
+      if (!categoryName) throw new Error('category_name is required — every Process must belong to a Function.');
+      const category_id = categoryByName.get(categoryName.toLowerCase());
+      if (!category_id) throw new Error(`Subtask "${categoryName}" was not found.`);
 
       const id = uuid();
       try {
@@ -89,7 +88,8 @@ router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (re
   if (!before) return res.status(404).json({ error: 'Main Task not found.' });
   const { name, category_id, description, is_active, reason } = req.body || {};
   if (name !== undefined && !name.trim()) return res.status(400).json({ error: 'Main Task name is required.' });
-  if (category_id !== undefined && category_id) {
+  if (category_id !== undefined) {
+    if (!category_id) return res.status(400).json({ error: 'A Process must always belong to a Function — choose one instead of clearing it.' });
     const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(category_id);
     if (!category) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
   }
@@ -113,8 +113,16 @@ router.delete('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (r
 
   const usedCount = (await db.prepare('SELECT COUNT(*) c FROM commitments WHERE main_task_id = ?').get(req.params.id)).c;
   const templateCount = (await db.prepare('SELECT COUNT(*) c FROM recurring_activities WHERE main_task_id = ?').get(req.params.id)).c;
-  if (usedCount > 0 || templateCount > 0) {
-    const parts = [usedCount > 0 && `${usedCount} task(s)`, templateCount > 0 && `${templateCount} recurring template(s)`].filter(Boolean);
+  // A Process with Activities still parked under it can't be deleted either — those Activities must
+  // always belong to a Process (same rule as a Process must always belong to a Function), so removing
+  // the parent here would either orphan them or hit a raw foreign-key error instead of this friendly one.
+  const activityCount = (await db.prepare('SELECT COUNT(*) c FROM task_activities WHERE main_task_id = ?').get(req.params.id)).c;
+  if (usedCount > 0 || templateCount > 0 || activityCount > 0) {
+    const parts = [
+      usedCount > 0 && `${usedCount} task(s)`,
+      templateCount > 0 && `${templateCount} recurring template(s)`,
+      activityCount > 0 && `${activityCount} Activit${activityCount === 1 ? 'y' : 'ies'}`,
+    ].filter(Boolean);
     return res.status(409).json({ error: `${parts.join(' and ')} already use this Main Task. Deactivate it instead of deleting it.` });
   }
 

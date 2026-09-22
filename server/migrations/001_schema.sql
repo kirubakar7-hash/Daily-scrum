@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS recurring_activities (
   category_id TEXT REFERENCES categories(id),
   main_task_id TEXT REFERENCES main_tasks(id),
   task_activity_id TEXT REFERENCES task_activities(id),
+  reviewer_id TEXT REFERENCES users(id),
   priority TEXT NOT NULL DEFAULT 'Medium',
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT now_utc(),
@@ -191,7 +192,8 @@ CREATE TABLE IF NOT EXISTS commitments (
   task_type_id TEXT REFERENCES task_types(id),
   category_id TEXT REFERENCES categories(id),
   main_task_id TEXT REFERENCES main_tasks(id),
-  task_activity_id TEXT REFERENCES task_activities(id)
+  task_activity_id TEXT REFERENCES task_activities(id),
+  reviewer_id TEXT REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS requests (
@@ -287,6 +289,8 @@ CREATE INDEX IF NOT EXISTS idx_commitments_main_task ON commitments(main_task_id
 CREATE INDEX IF NOT EXISTS idx_main_tasks_category ON main_tasks(category_id);
 CREATE INDEX IF NOT EXISTS idx_commitments_task_activity ON commitments(task_activity_id);
 CREATE INDEX IF NOT EXISTS idx_task_activities_main_task ON task_activities(main_task_id);
+CREATE INDEX IF NOT EXISTS idx_commitments_reviewer ON commitments(reviewer_id);
+CREATE INDEX IF NOT EXISTS idx_recurring_activities_reviewer ON recurring_activities(reviewer_id);
 
 -- Seed the two protected task types the app's recurrence engine and dashboard split rely on — every
 -- installation needs at least one active type per mechanic, so these can be renamed but not deleted.

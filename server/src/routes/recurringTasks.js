@@ -53,22 +53,32 @@ async function createRecurringTask(b, req) {
     mechanic = type.mechanic;
   }
 
-  let categoryId = b.category_id || null;
-  if (categoryId) {
-    const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
-    if (!category) throw new Error('That subtask is no longer available. Choose another.');
-  }
+  // Function → Process → Activity is required on every actual task, recurring templates included —
+  // same reasoning as the ad-hoc Create Task form in scrum.js.
+  const categoryId = b.category_id || null;
+  if (!categoryId) throw new Error('Choose the Function this task belongs to.');
+  const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
+  if (!category) throw new Error('That Function is no longer available. Choose another.');
 
-  let mainTaskId = b.main_task_id || null;
-  if (mainTaskId) {
-    const mainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(mainTaskId);
-    if (!mainTask) throw new Error('That Main Task is no longer available. Choose another.');
-  }
+  const mainTaskId = b.main_task_id || null;
+  if (!mainTaskId) throw new Error('Choose the Process this task belongs to.');
+  const mainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(mainTaskId);
+  if (!mainTask) throw new Error('That Process is no longer available. Choose another.');
 
-  let taskActivityId = b.task_activity_id || null;
-  if (taskActivityId) {
-    const activity = await db.prepare('SELECT id FROM task_activities WHERE id = ? AND is_active = 1').get(taskActivityId);
-    if (!activity) throw new Error('That Activity is no longer available. Choose another.');
+  const taskActivityId = b.task_activity_id || null;
+  if (!taskActivityId) throw new Error('Choose the Activity this task belongs to.');
+  const activity = await db.prepare('SELECT id FROM task_activities WHERE id = ? AND is_active = 1').get(taskActivityId);
+  if (!activity) throw new Error('That Activity is no longer available. Choose another.');
+
+  // Reviewer defaults per-employee to their manager (see scope.js's org hierarchy) unless the caller
+  // names one explicitly — every assignee in a multi-person recurring task can have a different manager.
+  let explicitReviewerId;
+  if (b.reviewer_id !== undefined) {
+    if (b.reviewer_id) {
+      const reviewer = await db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(b.reviewer_id);
+      if (!reviewer) throw new Error('That reviewer is no longer available. Choose another.');
+    }
+    explicitReviewerId = b.reviewer_id || null;
   }
 
   // The seed occurrence's due date snaps forward to the rule's own weekday selection, so a series
@@ -78,23 +88,24 @@ async function createRecurringTask(b, req) {
   const created = await db.transaction(async () => {
     const rows = [];
     for (const employeeId of b.employee_ids) {
-      const employee = await db.prepare("SELECT id, full_name FROM users WHERE id = ? AND is_active = 1 AND role = 'employee'").get(employeeId);
+      const employee = await db.prepare("SELECT id, full_name, manager_id FROM users WHERE id = ? AND is_active = 1 AND role = 'employee'").get(employeeId);
       if (!employee) continue; // skip silently — a deactivated/removed/non-employee person shouldn't block the rest of the assignment
+      const reviewerId = explicitReviewerId !== undefined ? explicitReviewerId : (employee.manager_id || null);
 
       const activityId = uuid();
       await db.prepare(`
-        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, task_activity_id, priority, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(activityId, employeeId, b.title.trim(), describeRule(rule), JSON.stringify(rule), startDate, taskTypeId, categoryId, mainTaskId, taskActivityId, priority, req.user.id);
+        INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(activityId, employeeId, b.title.trim(), describeRule(rule), JSON.stringify(rule), startDate, taskTypeId, categoryId, mainTaskId, taskActivityId, reviewerId, priority, req.user.id);
 
       const commitmentId = uuid();
       await db.prepare(`
         INSERT INTO commitments (
-          id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, priority,
+          id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority,
           start_date, due_date, original_due_date, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        commitmentId, employeeId, startDate, b.title.trim(), mechanic, activityId, taskTypeId, categoryId, mainTaskId, taskActivityId, priority,
+        commitmentId, employeeId, startDate, b.title.trim(), mechanic, activityId, taskTypeId, categoryId, mainTaskId, taskActivityId, reviewerId, priority,
         startDate, dueDate, dueDate, req.user.id, req.user.id
       );
 
@@ -159,23 +170,26 @@ router.post('/import', asyncHandler(async (req, res) => {
         task_type_id = taskTypeByName.get(taskTypeName.toLowerCase());
         if (!task_type_id) throw new Error(`Task type "${taskTypeName}" was not found.`);
       }
-      let category_id = null;
       const categoryName = (r.category_name || '').trim();
-      if (categoryName) {
-        category_id = categoryByName.get(categoryName.toLowerCase());
-        if (!category_id) throw new Error(`Subtask "${categoryName}" was not found.`);
-      }
-      let main_task_id = null;
+      if (!categoryName) throw new Error('category_name is required — every task must belong to a Function.');
+      const category_id = categoryByName.get(categoryName.toLowerCase());
+      if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
+
       const mainTaskName = (r.main_task_name || '').trim();
-      if (mainTaskName) {
-        main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
-        if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found.`);
-      }
-      let task_activity_id = null;
+      if (!mainTaskName) throw new Error('main_task_name is required — every task must belong to a Process.');
+      const main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
+      if (!main_task_id) throw new Error(`Process "${mainTaskName}" was not found.`);
+
       const activityName = (r.activity_name || '').trim();
-      if (activityName) {
-        task_activity_id = activityByName.get(activityName.toLowerCase());
-        if (!task_activity_id) throw new Error(`Activity "${activityName}" was not found.`);
+      if (!activityName) throw new Error('activity_name is required — every task must belong to an Activity.');
+      const task_activity_id = activityByName.get(activityName.toLowerCase());
+      if (!task_activity_id) throw new Error(`Activity "${activityName}" was not found.`);
+
+      let reviewer_id;
+      const reviewerEmail = (r.reviewer_email || '').trim();
+      if (reviewerEmail) {
+        reviewer_id = userByEmail.get(reviewerEmail.toLowerCase());
+        if (!reviewer_id) throw new Error(`No user found with reviewer email "${reviewerEmail}".`);
       }
 
       const created = await createRecurringTask({
@@ -185,6 +199,7 @@ router.post('/import', asyncHandler(async (req, res) => {
         category_id,
         main_task_id,
         task_activity_id,
+        reviewer_id,
         priority: (r.priority || '').trim() || undefined,
         start_date: (r.start_date || '').trim() || undefined,
         frequency: (r.frequency || '').trim() || undefined,
