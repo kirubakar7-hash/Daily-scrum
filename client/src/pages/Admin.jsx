@@ -1083,8 +1083,11 @@ function RecurringTasksTab() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const defaultReviewer = employeeIds.length === 1 ? (allUsers.find((u) => u.id === employeeIds[0])?.manager_id || '') : '';
-    setReviewerId((r) => (!r || r === autoFilledReviewer.current) ? defaultReviewer : r);
+    // Snapshot the OLD auto-fill value before overwriting the ref — see the identical comment on this
+    // same pattern in TeamTaskList.jsx's CreateTaskForm.
+    const previousAutoFill = autoFilledReviewer.current;
     autoFilledReviewer.current = defaultReviewer;
+    setReviewerId((r) => (!r || r === previousAutoFill) ? defaultReviewer : r);
   }, [employeeIds, allUsers]);
 
   // Activity is a TYPE of work, not the specific task itself (see ActivitiesTab above) — picking one no

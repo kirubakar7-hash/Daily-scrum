@@ -674,8 +674,12 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
   useEffect(() => {
     const emp = users.find((u) => u.id === employeeId);
     const defaultReviewer = emp?.manager_id || '';
-    setReviewerId((r) => (!r || r === autoFilledReviewer.current) ? defaultReviewer : r);
+    // Snapshot the OLD auto-fill value before overwriting the ref — the updater below runs during
+    // React's next render, by which point a same-line ref mutation would already show the NEW value,
+    // making the "is this still untouched" comparison always false against itself.
+    const previousAutoFill = autoFilledReviewer.current;
     autoFilledReviewer.current = defaultReviewer;
+    setReviewerId((r) => (!r || r === previousAutoFill) ? defaultReviewer : r);
   }, [employeeId, users]);
 
   // Activity is a TYPE of work (e.g. "Bank Reconciliation"), not the specific task itself — so picking
