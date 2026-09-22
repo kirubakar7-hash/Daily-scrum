@@ -24,9 +24,13 @@ async function assertValidManager(managerId, targetId, res) {
     res.status(400).json({ error: "Someone can't be their own manager." });
     return false;
   }
-  const manager = await db.prepare('SELECT role FROM users WHERE id = ?').get(managerId);
+  const manager = await db.prepare('SELECT role, is_active FROM users WHERE id = ?').get(managerId);
   if (!manager || !['leader', 'admin', 'super_admin'].includes(manager.role)) {
     res.status(400).json({ error: 'The manager must be a Leader, Admin, or Super Admin.' });
+    return false;
+  }
+  if (!manager.is_active) {
+    res.status(400).json({ error: 'That person is deactivated and can no longer be assigned as a manager.' });
     return false;
   }
   // Reuses subordinateIds (scope.js) rather than a second hierarchy walk — if the proposed manager
@@ -146,6 +150,20 @@ router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (re
     return res.status(400).json({ error: "You can't deactivate or change the role of the account you're currently logged in as." });
   }
   if (roleChanging && !ROLE_LABELS[role]) return res.status(400).json({ error: 'Invalid role.' });
+
+  // Deactivating, or demoting away from a manager-capable role, someone who still has active direct
+  // reports would silently orphan their accountability line — those reports' manager_id keeps pointing
+  // at someone who can no longer act on their tasks or approve their requests. Mirrors the same
+  // "people reporting to them" guard DELETE already has below, for this far more common offboarding path.
+  const losingManagerCapability = roleChanging && !['leader', 'admin', 'super_admin'].includes(role);
+  if (deactivating || losingManagerCapability) {
+    const reportCount = (await db.prepare('SELECT COUNT(*) c FROM users WHERE manager_id = ? AND is_active = 1').get(req.params.id)).c;
+    if (reportCount > 0) {
+      return res.status(409).json({
+        error: `This person still has ${reportCount} active report${reportCount === 1 ? '' : 's'}. Reassign them to another manager first.`,
+      });
+    }
+  }
   if (manager_id !== undefined && !(await assertValidManager(manager_id, req.params.id, res))) return;
 
   let normalizedEmail = before.email;

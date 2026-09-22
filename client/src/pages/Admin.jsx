@@ -455,7 +455,7 @@ function UsersTab() {
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
-  const managers = useMemo(() => (items || []).filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role)), [items]);
+  const managers = useMemo(() => (items || []).filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role) && u.is_active), [items]);
   // Depth-first walk of manager_id -> reports, so the table reads top-to-bottom as an org chart instead
   // of creation order. A dangling/unset manager_id is treated as a root, and a `visited` guard means a
   // stray cycle in bad data can't loop forever — it just stops re-descending, same defensive spirit as
