@@ -342,3 +342,14 @@ Maintained per the project's `CLAUDE.md` charter (section 44) — one entry per 
 **Tests:** `npm run build` clean. No logic changed — label/copy only.
 **Deployment:** Live.
 **Cost:** None.
+
+---
+
+**Date:** 2026-09-22
+**Change:** Added a team-wide month grid to Daily Scrum → Team Overview, behind a new Day/Month toggle. Month view is an attendance-register matrix — one row per team member, one column per day of the selected month, each cell showing Confirmed / Pending / Not yet due — with Prev/Next month navigation (capped at the current month).
+**Reason:** User shared a screenshot of an external HR tool's personal attendance calendar and asked for something similar, team-wide, on Daily Scrum. A single person's month reads fine as a wrapped 7-day calendar (like the reference screenshot); a team's doesn't — there's nowhere to fit several people's status into one day-cell — so this was adapted to a matrix, the standard shape once multiple people are involved. Confirmed this interpretation with the user before building.
+**Files:** `server/src/routes/leader.js` (new `GET /team-month?month=YYYY-MM`, reuses `scopedEmployees()` so the roster can never drift from Team Overview's own; date-range query against `scrum_sessions`, the same pattern `history.js` already used), `client/src/pages/TeamToday.jsx` (new `TeamMonthGrid` component, Day/Month toggle, `shiftMonth()` — pure integer arithmetic on the `'YYYY-MM'` string, deliberately never touches a `Date` object for the month-stepping itself).
+**Database:** No schema change.
+**Tests:** New test `team-month — returns every day of the requested month, scoped to the caller's roster, reflecting a real confirmed scrum` in `server/test/api.integration.test.js` — confirms day count, day ordering, roster scoping, and that a real confirmed scrum lands on the correct day. Full suite: 67/67 passing. `npm run build` clean.
+**Deployment:** Live.
+**Cost:** None.
