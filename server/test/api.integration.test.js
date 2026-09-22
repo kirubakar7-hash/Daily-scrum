@@ -14,6 +14,7 @@ process.env.NODE_ENV = 'test';
 const schema = await createTestSchema();
 const { db, closeDb, today } = await import('../src/db.js');
 const { app } = await import('../src/index.js');
+const { generateDueOccurrences, insertOccurrence } = await import('../src/lib/recurringOccurrences.js');
 
 let server, baseUrl;
 const ids = {};
@@ -793,4 +794,149 @@ test('scrum — the orphaned Escalations endpoints were removed, not just left u
   const { body: empLogin } = await login('employee@test.local', 'EmpPass123');
   const res = await fetch(`${baseUrl}/api/scrum/escalations`, { method: 'POST', headers: authed(empLogin.token), body: JSON.stringify({ issue: 'test' }) });
   assert.equal(res.status, 404, 'the route itself should no longer exist');
+});
+
+// UTC-safe day offset, matching the same discipline lib/recurrence.js itself uses — never round-trip
+// through a locally-parsed Date, which can silently land on the wrong calendar day.
+function daysAgo(n) {
+  const [y, m, d] = today().split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - n);
+  return dt.toISOString().slice(0, 10);
+}
+
+async function seedRecurringSeries({ rule, occurrencesCreated = 1, lastDueDate, employeeId = ids.reportAId }) {
+  const activityId = uuid();
+  await db.prepare(`
+    INSERT INTO recurring_activities (id, employee_id, title, recurrence_rule, series_start_date, occurrences_created, created_by)
+    VALUES (?, ?, 'Daily status update', ?, ?, ?, ?)
+  `).run(activityId, employeeId, JSON.stringify(rule), lastDueDate, occurrencesCreated, ids.superAdminId);
+  const commitmentId = uuid();
+  await db.prepare(`
+    INSERT INTO commitments (id, employee_id, scrum_date, description, type, recurring_activity_id, priority, due_date, original_due_date, start_date, created_by, updated_by)
+    VALUES (?, ?, ?, 'Daily status update', 'recurring', ?, 'Medium', ?, ?, ?, ?, ?)
+  `).run(commitmentId, employeeId, lastDueDate, activityId, lastDueDate, lastDueDate, lastDueDate, ids.superAdminId, ids.superAdminId);
+  return { activityId, commitmentId };
+}
+
+test('recurring generation — a Daily series nobody completed still advances to today, on its own schedule', async () => {
+  const { activityId, commitmentId: staleId } = await seedRecurringSeries({
+    rule: { interval: 1, unit: 'day', end: { type: 'never' } },
+    lastDueDate: daysAgo(5),
+  });
+
+  const result = await generateDueOccurrences();
+  assert.ok(result.created >= 1, 'at least this one stalled series must produce a new occurrence');
+
+  const rows = await db.prepare('SELECT * FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId);
+  assert.equal(rows.length, 2, 'the stale occurrence must stay, plus exactly one new current occurrence — not one row per skipped day');
+  const stale = rows.find((r) => r.id === staleId);
+  assert.equal(stale.status, 'pending', 'the old, never-completed occurrence must be left exactly as it was, still trackable as delayed');
+  const fresh = rows.find((r) => r.id !== staleId);
+  assert.equal(fresh.due_date, today(), 'the new occurrence must be due today, computed from the schedule — not from whenever someone gets to the old one');
+
+  const activity = await db.prepare('SELECT occurrences_created FROM recurring_activities WHERE id = ?').get(activityId);
+  assert.equal(activity.occurrences_created, 2, 'occurrences_created must be bumped exactly once for the one new row, same bookkeeping as the completion-triggered path');
+});
+
+test('recurring generation — running twice the same day does not create a duplicate', async () => {
+  const { activityId } = await seedRecurringSeries({
+    rule: { interval: 1, unit: 'day', end: { type: 'never' } },
+    lastDueDate: daysAgo(3),
+  });
+  await generateDueOccurrences();
+  const afterFirst = await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId);
+  await generateDueOccurrences();
+  const afterSecond = await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId);
+  assert.equal(afterSecond.c, afterFirst.c, 'a series already caught up to today must be left alone on a repeat run');
+});
+
+test('recurring generation — a series already current (due today or later) is left alone', async () => {
+  const { activityId } = await seedRecurringSeries({
+    rule: { interval: 1, unit: 'week', weekdays: [], end: { type: 'never' } },
+    lastDueDate: today(),
+  });
+  await generateDueOccurrences();
+  const count = await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId);
+  assert.equal(count.c, 1, 'nothing is due yet for this series, so no new occurrence should appear');
+});
+
+test('recurring generation — a series past its end condition is deactivated, not regenerated forever', async () => {
+  const { activityId } = await seedRecurringSeries({
+    rule: { interval: 1, unit: 'day', end: { type: 'after_count', count: 1 } },
+    occurrencesCreated: 1,
+    lastDueDate: daysAgo(4),
+  });
+  await generateDueOccurrences();
+  const activity = await db.prepare('SELECT is_active FROM recurring_activities WHERE id = ?').get(activityId);
+  assert.equal(activity.is_active, 0, 'a series that already reached its occurrence count must be turned off, not kept generating');
+  const count = await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId);
+  assert.equal(count.c, 1, 'no occurrence beyond the series\' own end condition should ever be created');
+});
+
+test('recurring generation — a long-dormant, count-limited series stops exactly at its true final occurrence, not the date it happens to catch up to', async () => {
+  // 2 occurrences already exist (occurrencesCreated: 2), the rule allows 3 total, and the series has sat
+  // untouched for 12 days — long enough that a walk-forward loop which doesn't re-check the count at each
+  // hop would sail straight past the 3rd (final) occurrence's real due date and land on today instead.
+  const { activityId } = await seedRecurringSeries({
+    rule: { interval: 1, unit: 'day', end: { type: 'after_count', count: 3 } },
+    occurrencesCreated: 2,
+    lastDueDate: daysAgo(12),
+  });
+  const expectedFinalDueDate = daysAgo(11); // the day right after the last real occurrence — the true 3rd/final one
+  await generateDueOccurrences();
+
+  const rows = await db.prepare('SELECT * FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId);
+  assert.equal(rows.length, 2, 'exactly one new occurrence — the true final one — must be created, nothing between it and today');
+  assert.equal(rows[1].due_date, expectedFinalDueDate, 'the series must stop at its actual 3rd occurrence\'s real due date, not overshoot to whatever date the walk happened to reach');
+
+  const activity = await db.prepare('SELECT is_active, occurrences_created FROM recurring_activities WHERE id = ?').get(activityId);
+  assert.equal(activity.occurrences_created, 3);
+  assert.equal(activity.is_active, 0, 'the series must be deactivated in the same run that creates its final occurrence, not one run later');
+});
+
+test('recurring generation — a race between two callers inserting the same occurrence cannot produce a duplicate row', async () => {
+  // Simulates exactly what two overlapping triggers (a double-fired cron invocation, or the schedule
+  // sweep racing an employee's completion) would each independently decide to do: both read "nothing
+  // exists yet" and both call insertOccurrence for the identical (activity, dueDate) with no guard between
+  // them. The database's unique index — not an application-level check — is what has to catch this.
+  const { activityId } = await seedRecurringSeries({
+    rule: { interval: 1, unit: 'day', end: { type: 'never' } },
+    lastDueDate: daysAgo(10),
+  });
+  const activity = await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(activityId);
+  const dueDate = daysAgo(9); // one day past the seeded occurrence — a date nothing else in this test has touched
+  const template = { description: 'Race condition check', employee_id: ids.reportAId, priority: 'Medium' };
+
+  const [a, b] = await Promise.all([
+    insertOccurrence({ activity, dueDate, template, changedBy: null, changedByName: 'Race A', reason: 'test' }),
+    insertOccurrence({ activity, dueDate, template, changedBy: null, changedByName: 'Race B', reason: 'test' }),
+  ]);
+  assert.equal(a.id, b.id, 'both concurrent callers must end up pointing at the same single row, not two different ones');
+
+  const rows = await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ? AND due_date = ?').get(activityId, dueDate);
+  assert.equal(rows.c, 1, 'only one commitment must exist for this (activity, due_date) pair no matter how many callers raced to create it');
+
+  const after = await db.prepare('SELECT occurrences_created FROM recurring_activities WHERE id = ?').get(activityId);
+  assert.equal(after.occurrences_created, 2, 'the loser of the race must not still bump the counter for a row it didn\'t actually create');
+});
+
+test('cron — /api/cron/generate-recurring refuses every request without the right shared secret, even a valid user login', async () => {
+  process.env.CRON_SECRET = 'test-cron-secret-value';
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+
+  const noAuth = await fetch(`${baseUrl}/api/cron/generate-recurring`);
+  assert.equal(noAuth.status, 401);
+
+  const wrongSecret = await fetch(`${baseUrl}/api/cron/generate-recurring`, { headers: { Authorization: 'Bearer wrong-value' } });
+  assert.equal(wrongSecret.status, 401);
+
+  const userToken = await fetch(`${baseUrl}/api/cron/generate-recurring`, { headers: authed(saLogin.token) });
+  assert.equal(userToken.status, 401, 'a normal logged-in session must not double as cron access');
+
+  const withSecret = await fetch(`${baseUrl}/api/cron/generate-recurring`, { headers: { Authorization: 'Bearer test-cron-secret-value' } });
+  assert.equal(withSecret.status, 200);
+  const body = await withSecret.json();
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.checked, 'number');
 });
