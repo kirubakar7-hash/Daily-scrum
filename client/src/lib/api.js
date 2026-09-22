@@ -20,7 +20,10 @@ async function request(method, path, body) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401) {
+  // A 401 from /auth/login itself isn't a stale session to clear — there was no session yet — it's the
+  // login attempt failing (wrong password, unknown/inactive account), and the real reason (from the JSON
+  // body below) is exactly what the sign-in form needs to show, not the generic "session expired" text.
+  if (res.status === 401 && path !== '/auth/login') {
     const hadToken = !!token;
     setToken(null);
     // ?expired=1 lets Login.jsx tell "your session ran out" apart from a fresh, first-time sign-in —
