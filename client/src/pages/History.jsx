@@ -209,7 +209,7 @@ export default function History() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-left text-grey-500 border-b border-grey-100 text-[11px] uppercase tracking-wide">
-                        <th className="py-2 pr-3 font-semibold">Employee</th><th className="pr-3 font-semibold">Scrum Days</th><th className="pr-3 font-semibold">Tasks</th>
+                        <th className="py-2 pr-3 font-semibold">Employee</th><th className="pr-3 font-semibold">Tasks</th>
                         <th className="pr-3 font-semibold">Completed</th><th className="pr-3 font-semibold">Support Required</th><th className="pr-3 font-semibold">Escalated</th>
                         <th className="pr-3 font-semibold">Recurring</th><th className="pr-3 font-semibold">Ad-hoc</th>
                       </tr>
@@ -218,7 +218,6 @@ export default function History() {
                       {summary.map((s, i) => (
                         <tr key={s.employee_id} className="border-b border-grey-50 last:border-0 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
                           <td className="py-2 pr-3 font-semibold text-grey-800">{s.full_name}</td>
-                          <td className="pr-3 text-grey-600">{s.scrum_days}</td>
                           <td className="pr-3 text-grey-600">{s.activities}</td>
                           <td className="pr-3 text-grey-600">{s.completed}</td>
                           <td className="pr-3">

@@ -5,46 +5,42 @@ import GuidedTour from './GuidedTour';
 import ChangePasswordModal from './ChangePasswordModal';
 import { useState } from 'react';
 import {
-  LayoutDashboard, ClipboardList, History, ShieldCheck, ScrollText, ListTodo, Users,
+  LayoutDashboard, History, ShieldCheck, ScrollText, ListTodo, Users,
   HelpCircle, LogOut, Menu, X, KeyRound,
 } from 'lucide-react';
 import logoColor from '../assets/brand/solidpro_logo_color.png';
 
 const NAV_BY_ROLE = {
   employee: [
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/my-tasks', label: 'My Tasks', icon: ListTodo },
     { to: '/all-tasks', label: 'Team Tasks', icon: Users },
-    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/history', label: 'My History', icon: History },
   ],
   senior_management: [
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/my-tasks', label: 'My Tasks', icon: ListTodo },
     { to: '/all-tasks', label: 'Team Tasks', icon: Users },
-    { to: '/team', label: 'Daily Scrum', icon: ClipboardList },
-    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/history', label: 'History', icon: History },
   ],
   leader: [
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/my-tasks', label: 'My Tasks', icon: ListTodo },
     { to: '/all-tasks', label: 'Team Tasks', icon: Users },
-    { to: '/team', label: 'Daily Scrum', icon: ClipboardList },
-    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/history', label: 'Team History', icon: History },
   ],
   admin: [
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/my-tasks', label: 'My Tasks', icon: ListTodo },
     { to: '/all-tasks', label: 'Team Tasks', icon: Users },
-    { to: '/team', label: 'Daily Scrum', icon: ClipboardList },
-    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/history', label: 'Team History', icon: History },
     { to: '/admin', label: 'Admin', icon: ShieldCheck },
     { to: '/audit', label: 'Audit Log', icon: ScrollText },
   ],
   super_admin: [
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/my-tasks', label: 'My Tasks', icon: ListTodo },
     { to: '/all-tasks', label: 'Team Tasks', icon: Users },
-    { to: '/team', label: 'Daily Scrum', icon: ClipboardList },
-    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/history', label: 'Team History', icon: History },
     { to: '/admin', label: 'Admin', icon: ShieldCheck },
     { to: '/audit', label: 'Audit Log', icon: ScrollText },

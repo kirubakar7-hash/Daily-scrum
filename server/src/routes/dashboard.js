@@ -84,7 +84,6 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
   const date = today();
 
   const teamCount = empIds.length && empIds[0] !== '__none__' ? empIds.length : 0;
-  const scrumCompleted = (await db.prepare(`SELECT COUNT(*) c FROM scrum_sessions WHERE scrum_date=? AND status='completed' AND employee_id IN (${clause})`).get(date, ...empIds)).c;
 
   const commitmentsToday = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE due_date=? AND employee_id IN (${clause}) AND is_active=1`).get(date, ...empIds)).c;
   const completed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE status='completed' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
@@ -101,6 +100,13 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
   const recurringCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='recurring' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
   const adhocCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='adhoc' AND employee_id IN (${clause}) AND is_active=1`).get(...empIds)).c;
   const totalWork = recurringCount + adhocCount;
+
+  // Requests (Support / Due-Date Change) still waiting on this Leader's review — this is the Dashboard's
+  // entry point to the same queue Team Tasks' "Action Required" indicator surfaces per row.
+  const pendingRequests = (await db.prepare(`
+    SELECT COUNT(*) c FROM requests r JOIN commitments c ON c.id = r.commitment_id
+    WHERE r.status='pending' AND c.employee_id IN (${clause})
+  `).get(...empIds)).c;
 
   // Attention required
   const delayedList = (await db.prepare(`
@@ -143,14 +149,13 @@ router.get('/leader', requireRole('super_admin', 'admin', 'leader', 'senior_mana
   res.json({
     date,
     team_members: teamCount,
-    scrum_completed: scrumCompleted,
-    scrum_pending: Math.max(teamCount - scrumCompleted, 0),
     commitments: commitmentsToday,
     completed,
     pending: pendingCount,
     in_progress: inProgressCount,
     support_required: supportRequiredCount,
     delayed,
+    pending_requests: pendingRequests,
     commitment_pct: commitmentPct,
     recurring_pct: totalWork ? Math.round((recurringCount / totalWork) * 1000) / 10 : null,
     adhoc_pct: totalWork ? Math.round((adhocCount / totalWork) * 1000) / 10 : null,
@@ -170,12 +175,6 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
   const teams = (await db.prepare(`SELECT COUNT(*) c FROM teams WHERE is_active=1`).get()).c;
 
   const totalEmployees = (await db.prepare(`SELECT COUNT(*) c FROM users WHERE role='employee' AND is_active=1`).get()).c;
-  // Numerator must count the same population as the denominator above — previously counted a completed
-  // scrum from ANY role, which could inflate this past 100% without those people being in totalEmployees.
-  const scrumCompleted = (await db.prepare(`
-    SELECT COUNT(*) c FROM scrum_sessions s JOIN users u ON u.id = s.employee_id
-    WHERE s.scrum_date=? AND s.status='completed' AND u.role='employee' AND u.is_active=1
-  `).get(date)).c;
 
   const commitments = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE is_active=1`).get()).c;
   const actions = (await db.prepare(`SELECT COUNT(*) c FROM actions WHERE status != 'completed'`).get()).c;
@@ -189,10 +188,9 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
   const adhocCount = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE type='adhoc' AND is_active=1`).get()).c;
   const totalWork = recurringCount + adhocCount;
 
-  // A bare headcount told a viewer nothing they didn't already know by name for a team this size — this
-  // now surfaces the one thing "By Team" should actually answer: who's confirmed today, and who leads
-  // each team (reusing the same computed-leader logic teams.js's own Teams tab already uses, so the two
-  // screens can never show a different leader for the same team).
+  // Who leads each team (reusing the same computed-leader logic teams.js's own Teams tab already uses,
+  // so the two screens can never show a different leader for the same team), plus each team's own open-task
+  // load — a bare headcount told a viewer nothing they didn't already know by name for a team this size.
   const teamsRaw = await db.prepare(`SELECT * FROM teams WHERE is_active = 1 ORDER BY name`).all();
   const teamsWithLeaders = await attachComputedLeaders(teamsRaw);
   const teamMembers = await db.prepare(`SELECT id, team_id FROM users WHERE is_active = 1 AND team_id IS NOT NULL`).all();
@@ -201,8 +199,9 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
     if (!memberIdsByTeam.has(m.team_id)) memberIdsByTeam.set(m.team_id, []);
     memberIdsByTeam.get(m.team_id).push(m.id);
   }
-  const confirmedTodaySet = new Set(
-    (await db.prepare(`SELECT employee_id FROM scrum_sessions WHERE scrum_date=? AND status='completed'`).all(date)).map((r) => r.employee_id)
+  const openCountsByEmployee = new Map(
+    (await db.prepare(`SELECT employee_id, COUNT(*) c FROM commitments WHERE is_active=1 AND status != 'completed' GROUP BY employee_id`).all())
+      .map((r) => [r.employee_id, r.c])
   );
   const byTeam = teamsWithLeaders.map((t) => {
     const memberIds = memberIdsByTeam.get(t.id) || [];
@@ -210,7 +209,7 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
       team_name: t.name,
       leader_name: t.leader_name,
       employees: memberIds.length,
-      scrum_completed: memberIds.filter((id) => confirmedTodaySet.has(id)).length,
+      open_tasks: memberIds.reduce((sum, id) => sum + (openCountsByEmployee.get(id) || 0), 0),
     };
   });
 
@@ -229,14 +228,15 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
     ORDER BY c.updated_at DESC LIMIT 20
   `).all();
 
+  const pendingRequests = (await db.prepare(`SELECT COUNT(*) c FROM requests WHERE status='pending'`).get()).c;
+
   res.json({
     date,
     active_users: activeUsers,
     teams,
     total_employees: totalEmployees,
-    scrum_completed: scrumCompleted,
-    scrum_pending: Math.max(totalEmployees - scrumCompleted, 0),
     commitments,
+    pending_requests: pendingRequests,
     actions,
     support_required: supportRequired,
     delayed,

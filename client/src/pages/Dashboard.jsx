@@ -81,8 +81,8 @@ function OrgDashboard({ data, role }) {
         <p className="text-grey-500 text-sm mt-0.5">{sub} — {data.date}</p>
       </div>
       <HelpBanner>
-        This screen rolls up every team's Daily Scrum into organization-wide numbers, calculated live from the database — nothing here is hard-coded.
-        Drill down via <strong>Admin</strong> (manage users and teams) or <strong>Daily Scrum</strong> / <strong>History</strong> for the detail behind any number.
+        This screen rolls up every team's tasks into organization-wide numbers, calculated live from the database — nothing here is hard-coded.
+        Drill down via <strong>Admin</strong> (manage users and teams) or <strong>Team Tasks</strong> / <strong>History</strong> for the detail behind any number.
       </HelpBanner>
 
       {/* Same "bottlenecks first" placement as the Leader dashboard — the one thing a 2-minute visit
@@ -102,11 +102,11 @@ function OrgDashboard({ data, role }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <KpiCard dense className="animate-fade-in-up" style={rowDelay(0)} icon={<Users className="w-4 h-4" />} label="Active Users" value={data.active_users} to="/admin" tone="brand" />
         <KpiCard dense className="animate-fade-in-up" style={rowDelay(1)} icon={<UsersRound className="w-4 h-4" />} label="Teams" value={data.teams} to="/admin" tone="brand" />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(2)} icon={<CheckCircle2 className="w-4 h-4" />} label="Scrum Completed" value={`${data.scrum_completed}/${data.total_employees}`} to="/team" tone="brand" explain="Who's confirmed today's commitments so far." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(3)} icon={<ListTodo className="w-4 h-4" />} label="Pending" value={data.pending} to="/history?status=pending" tone="grey" explain="Tasks not yet started." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(4)} icon={<Zap className="w-4 h-4" />} label="In Progress" value={data.in_progress} to="/history?status=in_progress" tone="brand" explain="Tasks actively being worked." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(5)} icon={<CheckCircle2 className="w-4 h-4" />} label="Completed" value={data.completed} to="/history?status=completed" tone="success" explain="Tasks marked done." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(6)} icon={<LifeBuoy className="w-4 h-4" />} label="Support Required" value={data.support_required} to="/history?status=support_required" tone="accent" explain="Tasks currently flagged as needing a leader's help." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(2)} icon={<ListTodo className="w-4 h-4" />} label="Pending" value={data.pending} to="/history?status=pending" tone="grey" explain="Tasks not yet started." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(3)} icon={<Zap className="w-4 h-4" />} label="In Progress" value={data.in_progress} to="/history?status=in_progress" tone="brand" explain="Tasks actively being worked." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(4)} icon={<CheckCircle2 className="w-4 h-4" />} label="Completed" value={data.completed} to="/history?status=completed" tone="success" explain="Tasks marked done." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(5)} icon={<LifeBuoy className="w-4 h-4" />} label="Support Required" value={data.support_required} to="/history?status=support_required" tone="accent" explain="Tasks currently flagged as needing a leader's help." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(6)} icon={<Bell className="w-4 h-4" />} label="Requests" value={data.pending_requests} to="/all-tasks" tone={data.pending_requests > 0 ? 'accent' : 'grey'} explain="Support / due-date-change requests waiting for review." />
       </div>
       <div className="grid sm:grid-cols-2 gap-2">
         <SplitCard label="Recurring Work" pct={data.recurring_pct} explain="Portion of recorded work that is regular, planned work." tone="brand" icon={Repeat} />
@@ -120,13 +120,13 @@ function OrgDashboard({ data, role }) {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1">Team</th><th>Leader</th><th className="text-right">Scrum Today</th></tr></thead>
+                <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1">Team</th><th>Leader</th><th className="text-right">Open Tasks</th></tr></thead>
                 <tbody>
                   {data.by_team.map((t, i) => (
                     <tr key={t.team_name} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={rowDelay(i)}>
                       <td className="py-1.5 font-semibold text-grey-800">{t.team_name}</td>
                       <td className="text-grey-600">{t.leader_name || <span className="text-grey-300">—</span>}</td>
-                      <td className="text-right text-grey-700">{t.scrum_completed}/{t.employees}</td>
+                      <td className="text-right text-grey-700">{t.open_tasks}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -134,8 +134,7 @@ function OrgDashboard({ data, role }) {
             </div>
             <BarList
               tone="brand"
-              max={100}
-              items={data.by_team.map((t) => ({ label: t.team_name, value: t.employees ? Math.round((t.scrum_completed / t.employees) * 100) : 0 }))}
+              items={data.by_team.map((t) => ({ label: t.team_name, value: t.open_tasks }))}
             />
           </div>
         )}
@@ -157,7 +156,7 @@ function LeaderDashboard({ data, role }) {
       <div className="animate-fade-in-up">
         <h1 className="text-lg font-bold text-grey-900">{heading}</h1>
         <p className="text-grey-500 text-sm mt-0.5">
-          <Link to="/team" className="text-brand-600 font-semibold hover:underline">{teamLabel}</Link>
+          <Link to="/all-tasks" className="text-brand-600 font-semibold hover:underline">{teamLabel}</Link>
           {' '}· {data.pending} task{data.pending === 1 ? '' : 's'} pending
         </p>
       </div>
@@ -183,13 +182,13 @@ function LeaderDashboard({ data, role }) {
       </Card>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(0)} icon={<Users className="w-4 h-4" />} label="Team Members" value={data.team_members} to="/team" tone="brand" />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(1)} icon={<CheckCircle2 className="w-4 h-4" />} label="Scrum Completed" value={`${data.scrum_completed}/${data.team_members}`} to="/team" tone="brand" explain="Who's confirmed today's commitments so far." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(2)} icon={<ListTodo className="w-4 h-4" />} label="Pending" value={data.pending} to="/history?status=pending" tone="grey" explain="Tasks not yet started." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(3)} icon={<Zap className="w-4 h-4" />} label="In Progress" value={data.in_progress} to="/history?status=in_progress" tone="brand" explain="Tasks actively being worked." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(4)} icon={<CheckCircle2 className="w-4 h-4" />} label="Completed" value={data.completed} to="/history?status=completed" tone="success" explain="Tasks marked done." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(5)} icon={<LifeBuoy className="w-4 h-4" />} label="Support Required" value={data.support_required} to="/history?status=support_required" tone="accent" explain="Tasks your team has flagged as needing your help." />
-        <KpiCard dense className="animate-fade-in-up" style={rowDelay(6)} icon={<Target className="w-4 h-4" />} label="Commitment %" value={data.commitment_pct != null ? `${data.commitment_pct}%` : '—'} tone="success" explain="Percentage of due commitments that were completed." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(0)} icon={<Users className="w-4 h-4" />} label="Team Members" value={data.team_members} to="/all-tasks" tone="brand" />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(1)} icon={<ListTodo className="w-4 h-4" />} label="Pending" value={data.pending} to="/history?status=pending" tone="grey" explain="Tasks not yet started." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(2)} icon={<Zap className="w-4 h-4" />} label="In Progress" value={data.in_progress} to="/history?status=in_progress" tone="brand" explain="Tasks actively being worked." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(3)} icon={<CheckCircle2 className="w-4 h-4" />} label="Completed" value={data.completed} to="/history?status=completed" tone="success" explain="Tasks marked done." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(4)} icon={<LifeBuoy className="w-4 h-4" />} label="Support Required" value={data.support_required} to="/history?status=support_required" tone="accent" explain="Tasks your team has flagged as needing your help." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(5)} icon={<Bell className="w-4 h-4" />} label="Requests" value={data.pending_requests} to="/all-tasks" tone={data.pending_requests > 0 ? 'accent' : 'grey'} explain="Support / due-date-change requests waiting for your review." />
+        <KpiCard dense className="animate-fade-in-up" style={rowDelay(6)} icon={<Target className="w-4 h-4" />} label="Completion Rate" value={data.commitment_pct != null ? `${data.commitment_pct}%` : '—'} tone="success" explain="Percentage of tasks due so far that were completed." />
       </div>
 
       <div className="grid sm:grid-cols-2 gap-2">
@@ -244,10 +243,10 @@ function EmployeeDashboard({ data }) {
           className="animate-fade-in-up"
           style={rowDelay(5)}
           icon={<TrendingUp className="w-4 h-4" />}
-          label="Commitment %"
+          label="Completion Rate"
           value={data.commitment_completion_rate != null ? `${data.commitment_completion_rate}%` : '—'}
           tone="success"
-          explain="Percentage of your due commitments that were completed."
+          explain="Percentage of your tasks due so far that were completed."
         />
       </div>
       <Card dense className="animate-fade-in-up">
@@ -283,7 +282,7 @@ function EmployeeDashboard({ data }) {
       {data.support_requested.length > 0 && (
         <Card dense className="border-accent-200 animate-fade-in-up">
           <h2 className="font-bold text-accent-700 mb-2 flex items-center gap-2"><LifeBuoy className="w-4 h-4" /> Waiting on Support</h2>
-          <p className="text-xs text-grey-400 mb-2">These are visible to every Leader in their Requests inbox, waiting for one to review.</p>
+          <p className="text-xs text-grey-400 mb-2">Visible to your Leader on Team Tasks, waiting for them to review.</p>
           <ul className="space-y-1 text-sm text-grey-700">
             {data.support_requested.map((c) => <li key={c.id}>{c.description}</li>)}
           </ul>

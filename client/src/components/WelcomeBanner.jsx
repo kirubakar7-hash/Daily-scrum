@@ -11,8 +11,8 @@ const ROLE_STEPS = {
     'Review everything logged for you any time in History.',
   ],
   leader: [
-    'See who has completed today\'s Scrum at a glance.',
-    'Open any employee to review their day in detail.',
+    'See every open task for your team, sorted by what needs attention first.',
+    'Open any task to review its full detail and history.',
     'Delayed work is flagged automatically from due dates — no manual scoring needed.',
     'Spot what needs your attention — overdue work, repeat support requests.',
     'Track your team\'s history and trends over time.',
@@ -69,7 +69,7 @@ export default function WelcomeBanner({ role, name, onStartTour }) {
       <div className="absolute right-16 bottom-0 w-24 h-24 rounded-full bg-accent-500/10 animate-float" style={{ animationDelay: '1.5s', animationDuration: '8s' }} />
       <div className="relative flex items-start justify-between gap-4">
         <div>
-          <h2 className="font-bold text-lg">Welcome to Daily Scrum Monitoring{name ? `, ${name}` : ''} 👋</h2>
+          <h2 className="font-bold text-lg">Welcome to Task Management{name ? `, ${name}` : ''} 👋</h2>
           <p className="text-brand-100 text-sm mt-1">This tool helps you:</p>
           <ol className="text-sm text-brand-50 mt-2 space-y-1 list-decimal list-inside">
             {steps.map((s) => <li key={s}>{s}</li>)}

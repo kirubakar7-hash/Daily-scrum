@@ -11,16 +11,14 @@ const TOUR_STEPS = {
     { route: '/history', selector: '[data-tour="history-search-tab"]', title: 'Search', body: 'Switch to this tab any time to find a task or action by keyword.' },
   ],
   leader: [
-    { route: '/team', selector: '[data-tour="nav-team"]', title: 'Daily Scrum', body: 'Your team\'s home base — who\'s done their scrum today, and every open task.' },
-    { route: '/team', selector: '[data-tour="team-overview-table"]', title: 'Team Overview', body: 'See who\'s completed today\'s scrum, who\'s delayed, and who needs support — at a glance.' },
-    { route: '/team', selector: '[data-tour="team-tasks-section"]', title: 'Team Tasks', body: 'Every open task for your team, sorted by due date. Click a due date to reschedule it, or create a new task for someone.' },
-    { route: '/team', selector: '[data-tour="create-task-button"]', title: 'Assign a task', body: 'Create a task for anyone on your team directly from here.' },
+    { route: '/my-tasks', selector: '[data-tour="create-task-button"]', title: 'Create or assign a task', body: 'Add something for yourself, or assign it to anyone on your team — right from here.' },
+    { route: '/all-tasks', selector: '[data-tour="nav-all-tasks"]', title: 'Team Tasks', body: 'Every open task for your team and everyone reporting to you — sortable, filterable, and searchable like a spreadsheet. Anything needing your review, like a due-date change request, shows up here too.' },
     { route: '/dashboard', selector: '[data-tour="nav-dashboard"]', title: 'Dashboard', body: 'A live rollup of your team\'s numbers — nothing here is typed in by hand.' },
     { route: '/dashboard', selector: '[data-tour="attention-section"]', title: 'Leadership Attention Required', body: 'Delayed work and support requests surface here automatically, so you don\'t have to go looking for them.' },
     { route: '/history', selector: '[data-tour="nav-history"]', title: 'History', body: 'Your team\'s full track record over time, searchable any time.' },
   ],
   admin: [
-    { route: '/team', selector: '[data-tour="nav-team"]', title: 'Daily Scrum', body: 'Works the same as it does for a Leader — see your team\'s scrum and tasks.' },
+    { route: '/all-tasks', selector: '[data-tour="nav-all-tasks"]', title: 'Team Tasks', body: 'Every task across the organization — sortable, filterable, and searchable like a spreadsheet.' },
     { route: '/admin', selector: '[data-tour="nav-admin"]', title: 'Admin', body: 'Manage every person and team in the organization.' },
     { route: '/admin', selector: '[data-tour="admin-tabs"]', title: 'Users, Teams, Task Types', body: 'Switch between these tabs to manage each part of your org structure.' },
     { route: '/admin', selector: '[data-tour="admin-create-user"]', title: 'Add a person', body: 'Create a new account here, then assign them a role and a team.' },
@@ -29,7 +27,7 @@ const TOUR_STEPS = {
   super_admin: [
     { route: '/dashboard', selector: '[data-tour="nav-dashboard"]', title: 'System Control Center', body: 'Full visibility across every team, user, and record in the organization.' },
     { route: '/admin', selector: '[data-tour="nav-admin"]', title: 'Admin', body: 'Manage every person and team. Your own account is protected — no one can change or deactivate it, including you, by accident.' },
-    { route: '/team', selector: '[data-tour="nav-team"]', title: 'Daily Scrum', body: 'See any team\'s scrum and tasks, same as a Leader would.' },
+    { route: '/all-tasks', selector: '[data-tour="nav-all-tasks"]', title: 'Team Tasks', body: 'Every task across the organization, same as a Leader would see for their own team.' },
     { route: '/audit', selector: '[data-tour="nav-audit"]', title: 'Audit Log', body: 'Every important change across the whole system — who changed it, when, and why. Nothing here can be edited or removed.' },
     { route: '/history', selector: '[data-tour="history-search-tab"]', title: 'Search', body: 'Switch to this tab any time to find any task or action by keyword, across the entire organization.' },
   ],

@@ -251,6 +251,11 @@ CREATE TABLE IF NOT EXISTS escalations (
   updated_by TEXT
 );
 
+-- Historical only as of the task-centric transformation (2026-09-22): this table backed the "Confirm
+-- Scrum" daily check-in, an idea independent of any actual task (had no effect on task-completion
+-- metrics). The app no longer asks anyone to confirm a daily scrum, no new rows are written, and nothing
+-- reads this table live — kept, not dropped, since it's real historical data, same as this project's
+-- other retired-but-preserved columns/tables (see e.g. users.password_changed_at above).
 CREATE TABLE IF NOT EXISTS scrum_sessions (
   id TEXT PRIMARY KEY,
   employee_id TEXT NOT NULL REFERENCES users(id),

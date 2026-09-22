@@ -101,16 +101,11 @@ router.get('/summary', asyncHandler(async (req, res) => {
   if (employeeIds.length === 0) return res.json({ summary: [] });
 
   const { clause: filterClause, params: filterParams } = buildCommitmentFilter(req);
-  let scrumDateFilter = '';
-  const scrumParams = [];
-  if (req.query.date_from) { scrumDateFilter += ' AND scrum_date >= ?'; scrumParams.push(req.query.date_from); }
-  if (req.query.date_to) { scrumDateFilter += ' AND scrum_date <= ?'; scrumParams.push(req.query.date_to); }
 
   const summary = await Promise.all(employeeIds.map(async (id) => {
     const user = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(id);
     const params = [id, ...filterParams];
 
-    const scrumDays = (await db.prepare(`SELECT COUNT(*) c FROM scrum_sessions WHERE employee_id = ? AND status='completed'${scrumDateFilter}`).get(id, ...scrumParams)).c;
     const activities = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ?${filterClause}`).get(...params)).c;
     const completed = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND status='completed'${filterClause}`).get(...params)).c;
     const supportRequired = (await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND status='support_required'${filterClause}`).get(...params)).c;
@@ -131,7 +126,6 @@ router.get('/summary', asyncHandler(async (req, res) => {
     return {
       employee_id: id,
       full_name: user?.full_name,
-      scrum_days: scrumDays,
       activities,
       completed,
       support_required: supportRequired,

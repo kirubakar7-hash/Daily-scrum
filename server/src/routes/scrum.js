@@ -81,7 +81,6 @@ router.get('/today', asyncHandler(async (req, res) => {
     SELECT * FROM actions WHERE employee_id = ? AND status != 'completed' AND is_active = 1 ORDER BY created_at
   `).all(employeeId);
 
-  const session = await db.prepare('SELECT * FROM scrum_sessions WHERE employee_id = ? AND scrum_date = ?').get(employeeId, date);
   const employee = await db.prepare('SELECT id, full_name, role, team_id, job_title FROM users WHERE id = ?').get(employeeId);
 
   res.json({
@@ -90,7 +89,6 @@ router.get('/today', asyncHandler(async (req, res) => {
     overdue,
     today_commitments: todayCommitments,
     open_actions: openActions,
-    session: session || { status: 'pending' },
   });
 }));
 
@@ -100,7 +98,8 @@ router.get('/today', asyncHandler(async (req, res) => {
 router.get('/my-tasks', asyncHandler(async (req, res) => {
   const date = req.query.date || today();
   const rows = await db.prepare(`
-    SELECT c.*, u.full_name AS employee_name, ra.frequency AS recurring_frequency, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name
+    SELECT c.*, u.full_name AS employee_name, ra.frequency AS recurring_frequency, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name,
+      rv.full_name AS reviewer_name, pr.id AS pending_request_id, pr.type AS pending_request_type, pr.requested_due_date AS pending_request_due_date
     FROM commitments c
     JOIN users u ON u.id = c.employee_id
     LEFT JOIN recurring_activities ra ON ra.id = c.recurring_activity_id
@@ -108,6 +107,10 @@ router.get('/my-tasks', asyncHandler(async (req, res) => {
     LEFT JOIN categories cat ON cat.id = c.category_id
     LEFT JOIN main_tasks mt ON mt.id = c.main_task_id
     LEFT JOIN task_activities ta ON ta.id = c.task_activity_id
+    LEFT JOIN users rv ON rv.id = c.reviewer_id
+    LEFT JOIN requests pr ON pr.id = (
+      SELECT id FROM requests WHERE commitment_id = c.id AND status = 'pending' ORDER BY created_at DESC LIMIT 1
+    )
     WHERE c.employee_id = ? AND c.is_active = 1 AND c.status != 'completed'
     ORDER BY c.due_date, c.created_at DESC
   `).all(req.user.id);
@@ -499,6 +502,46 @@ router.patch('/commitments/:id', asyncHandler(async (req, res) => {
     }
     after.reviewer_id = req.body.reviewer_id || null;
   }
+
+  // Reassigning the Owner, Process, Activity, or Task Type is a more privileged edit than everything
+  // above (available to anyone who can already act on the task via assertCanEdit) — only Admin/Super Admin
+  // can do it, so a Leader correcting their own report's due date can't accidentally also move the task to
+  // someone else entirely. Status isn't included here: it's already fully editable by anyone authorized,
+  // through the existing status dropdown / Complete / Request Support flows, which also handle the side
+  // effects (advancing a recurring series, creating a support request) a bare status write here would skip.
+  if (['admin', 'super_admin'].includes(req.user.role)) {
+    if (req.body?.employee_id !== undefined && req.body.employee_id !== before.employee_id) {
+      const chosenEmployee = await db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(req.body.employee_id);
+      if (!chosenEmployee) return res.status(400).json({ error: 'That person is no longer available. Choose another.' });
+      after.employee_id = req.body.employee_id;
+    }
+    if (req.body?.task_type_id !== undefined && req.body.task_type_id !== before.task_type_id) {
+      if (req.body.task_type_id) {
+        const chosenType = await db.prepare('SELECT * FROM task_types WHERE id = ? AND is_active = 1').get(req.body.task_type_id);
+        if (!chosenType) return res.status(400).json({ error: 'That type is no longer available. Choose another.' });
+        // Recurring vs Ad-hoc is a structural property tied to recurring_activity_id, not something a
+        // single occurrence can switch on its own — changing the schedule itself belongs to Admin's
+        // Recurring Tasks screen, not this edit.
+        if (chosenType.mechanic !== before.type) {
+          return res.status(400).json({ error: `This task is ${before.type === 'recurring' ? 'Recurring' : 'Ad-hoc'} — pick a type that matches, or change the schedule from Admin's Recurring Tasks screen instead.` });
+        }
+        after.task_type_id = req.body.task_type_id;
+      } else {
+        after.task_type_id = null;
+      }
+    }
+    if (req.body?.main_task_id !== undefined && req.body.main_task_id !== before.main_task_id) {
+      const chosenMainTask = await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(req.body.main_task_id);
+      if (!chosenMainTask) return res.status(400).json({ error: 'That Process is no longer available. Choose another.' });
+      after.main_task_id = req.body.main_task_id;
+    }
+    if (req.body?.task_activity_id !== undefined && req.body.task_activity_id !== before.task_activity_id) {
+      const chosenActivity = await db.prepare('SELECT id FROM task_activities WHERE id = ? AND is_active = 1').get(req.body.task_activity_id);
+      if (!chosenActivity) return res.status(400).json({ error: 'That Activity is no longer available. Choose another.' });
+      after.task_activity_id = req.body.task_activity_id;
+    }
+  }
+
   // A due-date change made through this general-purpose edit must reset a resolved task's status the
   // same way the dedicated carry-forward endpoint does — otherwise a task can end up shown as Completed
   // or Support Required with a due date that's silently moved out from under it.
@@ -506,9 +549,13 @@ router.patch('/commitments/:id', asyncHandler(async (req, res) => {
     after.status = 'pending';
   }
   await db.prepare(`
-    UPDATE commitments SET description=?, priority=?, expected_outcome=?, due_date=?, due_time=?, estimated_effort=?, dependency=?, dependency_owner=?, remarks=?, status=?, reviewer_id=?, updated_at=datetime('now'), updated_by=?
+    UPDATE commitments SET description=?, priority=?, expected_outcome=?, due_date=?, due_time=?, estimated_effort=?, dependency=?, dependency_owner=?, remarks=?, status=?, reviewer_id=?,
+      employee_id=?, task_type_id=?, main_task_id=?, task_activity_id=?, updated_at=datetime('now'), updated_by=?
     WHERE id=?
-  `).run(after.description, after.priority, after.expected_outcome, after.due_date, after.due_time, after.estimated_effort, after.dependency, after.dependency_owner, after.remarks, after.status, after.reviewer_id, req.user.id, before.id);
+  `).run(
+    after.description, after.priority, after.expected_outcome, after.due_date, after.due_time, after.estimated_effort, after.dependency, after.dependency_owner, after.remarks, after.status, after.reviewer_id,
+    after.employee_id, after.task_type_id, after.main_task_id, after.task_activity_id, req.user.id, before.id
+  );
   await auditDiff({
     tableName: 'commitments', recordId: before.id, before, after, changedBy: req.user.id, changedByName: req.user.full_name, reason: req.body?.reason,
     ownerId: before.employee_id, ownerName: await employeeName(before.employee_id),
@@ -586,21 +633,6 @@ router.patch('/actions/:id', asyncHandler(async (req, res) => {
     .run(status, completionDate, req.body?.remarks ?? before.remarks, req.user.id, before.id);
   await auditDiff({ tableName: 'actions', recordId: before.id, before, after: { status }, changedBy: req.user.id, changedByName: req.user.full_name });
   res.json({ action: await db.prepare('SELECT * FROM actions WHERE id = ?').get(before.id) });
-}));
-
-/** POST /api/scrum/confirm — Step 5, confirm today's commitments */
-router.post('/confirm', asyncHandler(async (req, res) => {
-  const employeeId = targetEmployeeId(req);
-  if (!(await assertCanEdit(req, res, employeeId))) return;
-  const date = req.body?.date || today();
-  const existing = await db.prepare('SELECT * FROM scrum_sessions WHERE employee_id = ? AND scrum_date = ?').get(employeeId, date);
-  if (existing) {
-    await db.prepare(`UPDATE scrum_sessions SET status='completed', completed_at=datetime('now'), updated_at=datetime('now') WHERE id=?`).run(existing.id);
-  } else {
-    await db.prepare(`INSERT INTO scrum_sessions (id, employee_id, scrum_date, status, completed_at) VALUES (?, ?, ?, 'completed', datetime('now'))`)
-      .run(uuid(), employeeId, date);
-  }
-  res.json({ ok: true });
 }));
 
 /** GET /api/scrum/suggestions — free-text reuse suggestions, never mandatory */

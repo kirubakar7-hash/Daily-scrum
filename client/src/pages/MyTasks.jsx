@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ListTodo, CheckCircle2 } from 'lucide-react';
+import { ListTodo } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
-import { Button, Card, ErrorBanner } from '../components/ui';
+import { Card } from '../components/ui';
 import TeamTaskList from '../components/TeamTaskList';
 
 const LEADER_TIER = ['leader', 'admin', 'super_admin'];
@@ -35,60 +35,9 @@ export default function MyTasks() {
           </p>
         </div>
       </div>
-      {!readOnly && <ConfirmScrumCard />}
       <Card className="animate-fade-in-up">
         <TeamTaskList assignees={assignees} fetchUrl="/scrum/my-tasks" readOnly={readOnly} />
       </Card>
     </div>
-  );
-}
-
-/** Your own daily check-in — separate from any individual task, this is what shows up as "Done"/"Pending"
- *  on your leader's Daily Scrum > Team Overview for today. Self-service only (never on someone else's
- *  behalf), and only ever for today — there's no date picker here on purpose, unlike Team Overview's,
- *  since confirming a past day after the fact wouldn't mean anything. */
-function ConfirmScrumCard() {
-  const [session, setSession] = useState(null);
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState('');
-
-  function load() {
-    api.get('/scrum/today').then((d) => setSession(d.session)).catch(() => {});
-  }
-  useEffect(load, []);
-
-  async function confirm() {
-    setConfirming(true);
-    setError('');
-    try {
-      await api.post('/scrum/confirm', {});
-      load();
-    } catch (e) {
-      setError(e.message || "Couldn't confirm your scrum.");
-    } finally {
-      setConfirming(false);
-    }
-  }
-
-  if (!session) return null;
-
-  return (
-    <Card dense className="animate-fade-in-up">
-      {session.status === 'completed' ? (
-        <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-700">
-          <CheckCircle2 className="w-4 h-4 shrink-0" /> You've confirmed today's scrum.
-        </div>
-      ) : (
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="text-sm text-grey-600">
-            <span className="font-semibold text-grey-800">Confirm today's scrum</span> — let your leader know you're checked in for today.
-          </div>
-          <Button size="sm" onClick={confirm} disabled={confirming}>
-            <CheckCircle2 className="w-3.5 h-3.5" /> {confirming ? 'Confirming…' : 'Confirm Scrum'}
-          </Button>
-        </div>
-      )}
-      <ErrorBanner message={error} />
-    </Card>
   );
 }

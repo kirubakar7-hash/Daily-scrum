@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy, CalendarClock, History as HistoryIcon, User, X } from 'lucide-react';
+import {
+  Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy,
+  CalendarClock, History as HistoryIcon, User, X, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Pencil,
+} from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { getBusinessDate } from '../lib/businessDate';
@@ -10,8 +13,9 @@ import ImportButton from './ImportButton';
 import AuditTimeline from './AuditTimeline';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
-const EMPTY_TASK_FILTERS = { employee: '', type: '', priority: '', status: '', mainTask: '', taskActivity: '' };
+const EMPTY_TASK_FILTERS = { employee: '', type: '', taskTypeName: '', priority: '', status: '', mainTask: '', taskActivity: '' };
 const today = getBusinessDate();
+const PAGE_SIZE = 25;
 
 function csvEscape(v) {
   return `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -19,14 +23,62 @@ function csvEscape(v) {
 
 const alwaysTrue = () => true;
 
-/** Shared list+bulk+inline-edit table, reused by the leader-scoped "Team Tasks" tab, the org-wide
- *  "Team Tasks" page, and "My Tasks". `fetchUrl` picks the data source; `assignees` is who a new task can
- *  be created for; `canActOn(task)` (default: everyone can) decides per row whether the status/date/delete
- *  controls are live or read-only, layered on top of the list-wide `readOnly`; `showCreate` hides the
- *  Create Task button entirely for pages (like the org-wide view) that don't want a third creation surface. */
-export default function TeamTaskList({ assignees: assigneesProp, team, readOnly, date = today, fetchUrl = '/leader/team-tasks', canActOn = alwaysTrue, showCreate = true }) {
+/** The task's permanent, human-readable reference — same code format History already uses for the same
+ *  row (TSK-000123, derived from the database's own row sequence). */
+function taskCode(t) {
+  return t.seq ? `TSK-${String(t.seq).padStart(6, '0')}` : '—';
+}
+
+/** One line describing what, if anything, this task needs from its viewer right now — a pending request
+ *  waiting on review takes priority (it's a decision someone owes), then overdue, then nothing. Not shown
+ *  for a row the viewer can't act on — there's no "action required" from someone who can't take it. */
+function actionRequired(t) {
+  if (t.pending_request_id) {
+    return t.pending_request_type === 'due_date_change'
+      ? { label: `Approve date → ${t.pending_request_due_date}`, tone: 'recurring' }
+      : { label: 'Review support request', tone: 'support_required' };
+  }
+  if (t.delay_days > 0) return { label: `${t.delay_days}d overdue`, tone: 'support_required' };
+  return null;
+}
+
+/** Ascending comparator for the sortable columns — a small fixed set (not user-defined key paths), so a
+ *  plain switch is clearer than a generic accessor-function table nobody would reuse elsewhere. */
+function compareTasks(a, b, sortBy) {
+  switch (sortBy) {
+    case 'code': return (a.seq || 0) - (b.seq || 0);
+    case 'task': return (a.description || '').localeCompare(b.description || '');
+    case 'employee': return (a.employee_name || '').localeCompare(b.employee_name || '');
+    case 'due': return (a.due_date || '').localeCompare(b.due_date || '');
+    case 'priority': return PRIORITIES.indexOf(a.priority) - PRIORITIES.indexOf(b.priority);
+    case 'status': return (a.status || '').localeCompare(b.status || '');
+    default: return 0;
+  }
+}
+
+/** A clickable column header that toggles ascending/descending sort on `by`. Declared at module scope
+ *  (not inside the table component) so React doesn't treat it as a brand-new component type every render
+ *  — that would remount it, discarding nothing stateful here but still wasteful. */
+function SortHeader({ by, sort, onSort, children, className = '' }) {
+  const active = sort.by === by;
+  const Icon = active ? (sort.dir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+  return (
+    <th className={`py-2 pr-4 ${className}`}>
+      <button type="button" onClick={() => onSort(by)} className="inline-flex items-center gap-1 hover:text-grey-800 transition-colors press-scale">
+        {children} <Icon className={`w-3 h-3 ${active ? 'text-brand-600' : 'text-grey-300'}`} />
+      </button>
+    </th>
+  );
+}
+
+/** Shared list+bulk+inline-edit table, reused by "My Tasks" and the org-wide "Team Tasks" page. `fetchUrl`
+ *  picks the data source; `assignees` is who a new task can be created for; `canActOn(task)` (default:
+ *  everyone can) decides per row whether the status/date/delete controls are live or read-only, layered
+ *  on top of the list-wide `readOnly`; `showCreate` hides the Create Task button entirely for pages (like
+ *  the org-wide view) that don't want a second creation surface. */
+export default function TeamTaskList({ assignees: assigneesProp, readOnly, date = today, fetchUrl = '/leader/org-tasks', canActOn = alwaysTrue, showCreate = true }) {
   const { user } = useAuth();
-  const assignees = assigneesProp || team || [];
+  const assignees = assigneesProp || [];
   const [tasks, setTasks] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -36,11 +88,16 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState('');
   const [requestModal, setRequestModal] = useState(null); // { task, kind: 'support' | 'due_date_change' }
-  const [historyTask, setHistoryTask] = useState(null);
+  const [detailTask, setDetailTask] = useState(null);
+  const [editTask, setEditTask] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [employeeOptions, setEmployeeOptions] = useState([]);
   const [mainTaskOptions, setMainTaskOptions] = useState([]);
   const [taskActivityOptions, setTaskActivityOptions] = useState([]);
+  const [taskTypeOptions, setTaskTypeOptions] = useState([]);
+  const [sort, setSort] = useState({ by: 'due', dir: 'asc' });
+  const [page, setPage] = useState(1);
+  const isAdminTier = ['admin', 'super_admin'].includes(user.role);
 
   // Sourced from the org's canonical lists (not from whichever tasks happen to be loaded), same pattern
   // History.jsx already uses — otherwise someone with zero currently-open tasks can never be filtered to
@@ -49,6 +106,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
     api.get('/history/summary').then((d) => setEmployeeOptions(d.summary.map((s) => s.full_name).sort())).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTaskOptions(d.main_tasks.filter((m) => m.is_active).map((m) => m.name).sort())).catch(() => {});
     api.get('/task-activities').then((d) => setTaskActivityOptions(d.task_activities.filter((a) => a.is_active).map((a) => a.name).sort())).catch(() => {});
+    api.get('/task-types').then((d) => setTaskTypeOptions(d.task_types.filter((t) => t.is_active).map((t) => t.name).sort())).catch(() => {});
   }, []);
 
   function load(noticeText) {
@@ -116,23 +174,41 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   }
 
   useEffect(() => { load(); }, [date, fetchUrl]);
+  // A filter/sort change can easily land past the end of a page that used to exist — back to page 1
+  // rather than showing an empty page the user has to notice and back out of themselves.
+  useEffect(() => { setPage(1); }, [filters, sort, tasks]);
 
   const filteredTasks = useMemo(() => (tasks || []).filter((t) =>
     (!filters.employee || t.employee_name === filters.employee)
     && (!filters.type || t.type === filters.type)
+    && (!filters.taskTypeName || t.task_type_name === filters.taskTypeName)
     && (!filters.priority || t.priority === filters.priority)
     && (!filters.status || t.status === filters.status)
     && (!filters.mainTask || t.main_task_name === filters.mainTask)
     && (!filters.taskActivity || t.task_activity_name === filters.taskActivity)
   ), [tasks, filters]);
+  const sortedTasks = useMemo(() => {
+    const copy = [...filteredTasks];
+    copy.sort((a, b) => (sort.dir === 'asc' ? 1 : -1) * compareTasks(a, b, sort.by));
+    return copy;
+  }, [filteredTasks, sort]);
+  const pageCount = Math.max(1, Math.ceil(sortedTasks.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pagedTasks = useMemo(() => sortedTasks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE), [sortedTasks, currentPage]);
   const filtersActive = Object.values(filters).some(Boolean);
   const isRowReadOnly = (t) => readOnly || !canActOn(t);
-  const selectableTasks = useMemo(() => filteredTasks.filter((t) => !isRowReadOnly(t)), [filteredTasks, readOnly, canActOn]);
+  // Selection/bulk actions only ever apply to what's visibly on screen — selecting "all" shouldn't
+  // silently reach into pages the user isn't looking at.
+  const selectableTasks = useMemo(() => pagedTasks.filter((t) => !isRowReadOnly(t)), [pagedTasks, readOnly, canActOn]);
+
+  function toggleSort(by) {
+    setSort((s) => (s.by === by ? { by, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { by, dir: 'asc' }));
+  }
 
   function exportCsv() {
-    const header = ['Task', 'Employee', 'Type', 'Process', 'Activity', 'Priority', 'Due', 'Status'];
+    const header = ['Task ID', 'Task', 'Employee', 'Type', 'Process', 'Activity', 'Priority', 'Due', 'Status'];
     const lines = [header.join(',')].concat(
-      filteredTasks.map((t) => [t.description, t.employee_name, t.task_type_name || t.type, t.main_task_name || '', t.task_activity_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
+      sortedTasks.map((t) => [taskCode(t), t.description, t.employee_name, t.task_type_name || t.type, t.main_task_name || '', t.task_activity_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
     );
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -210,7 +286,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
         />
       )}
 
-      {historyTask && <TaskHistoryDrawer task={historyTask} onClose={() => setHistoryTask(null)} />}
+      {detailTask && <TaskDetailDrawer task={detailTask} onChanged={load} canAct={!isRowReadOnly(detailTask)} onClose={() => setDetailTask(null)} />}
 
       <ErrorBanner message={deleteError} />
       {notice && (
@@ -224,15 +300,19 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
           <div className="flex items-center gap-1.5 text-xs font-semibold text-grey-500 mb-2 uppercase tracking-wide">
             <Filter className="w-3.5 h-3.5" /> Filter
           </div>
-          <div className="grid sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+          <div className="grid sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
             <Select value={filters.employee} onChange={(e) => setFilters((f) => ({ ...f, employee: e.target.value }))}>
               <option value="">All employees</option>
               {employeeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
             <Select value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}>
-              <option value="">All types</option>
+              <option value="">All mechanics</option>
               <option value="recurring">Recurring</option>
               <option value="adhoc">Ad-hoc</option>
+            </Select>
+            <Select value={filters.taskTypeName} onChange={(e) => setFilters((f) => ({ ...f, taskTypeName: e.target.value }))}>
+              <option value="">All task types</option>
+              {taskTypeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
             <Select value={filters.mainTask} onChange={(e) => setFilters((f) => ({ ...f, mainTask: e.target.value }))}>
               <option value="">All Processes</option>
@@ -320,21 +400,24 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                     />
                   </th>
                 )}
-                <th className="py-2 pr-4">Task</th>
-                <th className="py-2 pr-4">Employee</th>
+                <SortHeader by="code" sort={sort} onSort={toggleSort}>Task ID</SortHeader>
+                <SortHeader by="task" sort={sort} onSort={toggleSort}>Task</SortHeader>
+                <SortHeader by="employee" sort={sort} onSort={toggleSort}>Employee</SortHeader>
                 <th className="py-2 pr-4">Type</th>
                 <th className="py-2 pr-4">Process</th>
-                <th className="py-2 pr-4">Priority</th>
-                <th className="py-2 pr-4">Due</th>
-                <th className="py-2 pr-4">Status</th>
+                <SortHeader by="priority" sort={sort} onSort={toggleSort}>Priority</SortHeader>
+                <SortHeader by="due" sort={sort} onSort={toggleSort}>Due</SortHeader>
+                <SortHeader by="status" sort={sort} onSort={toggleSort}>Status</SortHeader>
+                <th className="py-2 pr-4">Action</th>
                 <th className="py-2 pr-4"></th>
               </tr>
             </thead>
             <tbody>
-              {filteredTasks.map((t, i) => {
+              {pagedTasks.map((t, i) => {
                 const rowReadOnly = isRowReadOnly(t);
                 const isOwnTask = t.employee_id === user.id;
                 const canRequest = isOwnTask && !readOnly && t.status !== 'completed';
+                const action = isRowReadOnly(t) ? null : actionRequired(t);
                 return (
                 <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
                   {!readOnly && selectableTasks.length > 0 && (
@@ -344,6 +427,16 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                       )}
                     </td>
                   )}
+                  <td className="py-2.5 pr-4">
+                    <button
+                      type="button"
+                      onClick={() => setDetailTask(t)}
+                      className="font-mono text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 px-1.5 py-0.5 rounded-md border border-brand-100 transition-colors press-scale"
+                      title="View task detail"
+                    >
+                      {taskCode(t)}
+                    </button>
+                  </td>
                   <td className="py-2.5 pr-4 font-semibold text-grey-800 max-w-[280px]">
                     {t.description}
                     {t.status === 'support_required' && (t.non_completion_reason || t.non_completion_explanation) && (
@@ -379,15 +472,37 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
                     {rowReadOnly ? <Badge tone={t.status}>{t.status}</Badge> : <StatusDropdown task={t} onChanged={load} />}
                   </td>
                   <td className="py-2.5 pr-4">
+                    {action ? (
+                      <button
+                        type="button"
+                        onClick={() => setDetailTask(t)}
+                        className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg press-scale transition-colors ${badgeClassFor(action.tone)}`}
+                        title="Open task detail to act on this"
+                      >
+                        <AlertTriangle className="w-3 h-3" /> {action.label}
+                      </button>
+                    ) : <span className="text-grey-300">—</span>}
+                  </td>
+                  <td className="py-2.5 pr-4">
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        title="View history"
-                        onClick={() => setHistoryTask(t)}
+                        title="View task detail"
+                        onClick={() => setDetailTask(t)}
                         className="text-grey-400 hover:text-brand-600 transition-colors press-scale"
                       >
                         <HistoryIcon className="w-4 h-4" />
                       </button>
+                      {isAdminTier && (
+                        <button
+                          type="button"
+                          title="Edit task"
+                          onClick={() => setEditTask(t)}
+                          className="text-grey-400 hover:text-brand-600 transition-colors press-scale"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
                       {canRequest && (
                         <>
                           <button
@@ -421,7 +536,35 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
               );})}
             </tbody>
           </table>
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-grey-100">
+              <span className="text-xs text-grey-400">
+                Page {currentPage} of {pageCount} — {sortedTasks.length} task{sortedTasks.length === 1 ? '' : 's'}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-grey-500 hover:bg-grey-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors press-scale"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  disabled={currentPage >= pageCount}
+                  onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-grey-500 hover:bg-grey-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors press-scale"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+      )}
+      {editTask && isAdminTier && (
+        <EditTaskModal task={editTask} onClose={() => setEditTask(null)} onSaved={(msg) => { setEditTask(null); load(msg); }} />
       )}
     </div>
   );
@@ -748,6 +891,103 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
   );
 }
 
+/** Admin/Super Admin only — full-field edit of an existing task (Owner, Process, Activity, Task Type,
+ *  Priority, Due date, Reviewer, Description), all recorded against the same Task ID via the normal
+ *  audit-diff on the PATCH route. Doesn't offer Status (already editable inline via the status dropdown,
+ *  which also runs side effects like advancing a recurring series — a bare status write here would skip
+ *  those) or recurring-schedule fields (that belongs to Admin's Recurring Tasks screen). Task Type is
+ *  restricted server-side to the task's existing Recurring/Ad-hoc mechanic — the dropdown here mirrors
+ *  that by only offering same-mechanic types, so a rejected choice never surprises the person picking it. */
+function EditTaskModal({ task, onClose, onSaved }) {
+  const [employeeId, setEmployeeId] = useState(task.employee_id);
+  const [description, setDescription] = useState(task.description);
+  const [taskTypes, setTaskTypes] = useState([]);
+  const [taskTypeId, setTaskTypeId] = useState(task.task_type_id || '');
+  const [mainTasks, setMainTasks] = useState([]);
+  const [mainTaskId, setMainTaskId] = useState(task.main_task_id || '');
+  const [taskActivities, setTaskActivities] = useState([]);
+  const [taskActivityId, setTaskActivityId] = useState(task.task_activity_id || '');
+  const [users, setUsers] = useState([]);
+  const [reviewerId, setReviewerId] = useState(task.reviewer_id || '');
+  const [priority, setPriority] = useState(task.priority);
+  const [dueDate, setDueDate] = useState(task.due_date);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    api.get('/task-types').then((d) => setTaskTypes(d.task_types.filter((t) => t.is_active && t.mechanic === task.type)))
+      .catch(() => setLoadError("Couldn't load Task Types — try closing and reopening this form."));
+    api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => setLoadError("Couldn't load Processes — try closing and reopening this form."));
+    api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => setLoadError("Couldn't load Activities — try closing and reopening this form."));
+    api.get('/users').then((d) => setUsers(d.users.filter((u) => u.is_active))).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
+  const reviewers = users.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role));
+
+  async function save() {
+    setError('');
+    if (!employeeId) return setError('Choose who this task is for.');
+    if (!description.trim()) return setError('Please describe the task.');
+    if (!mainTaskId) return setError('Choose the Process this task belongs to.');
+    if (!taskActivityId) return setError('Choose the Activity this task belongs to.');
+    setSaving(true);
+    try {
+      await api.patch(`/scrum/commitments/${task.id}`, {
+        employee_id: employeeId, description, task_type_id: taskTypeId || null, main_task_id: mainTaskId, task_activity_id: taskActivityId,
+        reviewer_id: reviewerId || null, priority, due_date: dueDate,
+      });
+      onSaved(`Saved changes to ${taskCode(task)}.`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Edit ${taskCode(task)}`} wide>
+      <div className="space-y-3">
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Select label="Owner" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+          </Select>
+          <Input label="Due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Select label="Process" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
+            <option value="">Choose a Process…</option>
+            {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </Select>
+          <Select label="Activity" value={taskActivityId} onChange={(e) => setTaskActivityId(e.target.value)}>
+            <option value="">Choose an Activity…</option>
+            {activitiesForMainTask.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </Select>
+        </div>
+        <Textarea required label="Task" value={description} onChange={(e) => setDescription(e.target.value)} />
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <Select label="Type" value={taskTypeId} onChange={(e) => setTaskTypeId(e.target.value)}>
+            <option value="">—</option>
+            {taskTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </Select>
+          <Select label={<>Priority<InfoTip term="priority" /></>} value={priority} onChange={(e) => setPriority(e.target.value)}>
+            {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+          </Select>
+          <Select label="Reviewer" value={reviewerId} onChange={(e) => setReviewerId(e.target.value)}>
+            <option value="">No reviewer</option>
+            {reviewers.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
+          </Select>
+        </div>
+        <ErrorBanner message={loadError} />
+        <ErrorBanner message={error} />
+        <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</Button>
+      </div>
+    </Modal>
+  );
+}
+
 const SUPPORT_REASONS = ['Workload', 'Finance', 'Procurement', 'Approval', 'Management', 'Customer', 'Vendor', 'Technical', 'Information pending', 'Priority changed', 'Other'];
 
 /** "Request Support" / "Request a Due-Date Change" — both create a `requests` row for a Leader to review
@@ -809,10 +1049,15 @@ function RequestModal({ task, kind, onClose, onSubmitted }) {
  *  (created, status, due date, deletion, etc.), each entry showing who did it and when. Reuses the exact
  *  same formatting as the org-wide Audit Log page (AuditTimeline), just scoped to a single task via
  *  GET /commitments/:id/history. */
-function TaskHistoryDrawer({ task, onClose }) {
+/** Everything about one task, keyed by its permanent Task ID — the fields it currently has, any request
+ *  still waiting on a decision, and the full change history. The single place this app's task lifecycle
+ *  (created → updated → requested → approved → completed) can be read back end to end for one task. */
+function TaskDetailDrawer({ task, onChanged, canAct, onClose }) {
   const [logs, setLogs] = useState(null);
   const [error, setError] = useState('');
-  const code = task.seq ? `TSK-${String(task.seq).padStart(6, '0')}` : null;
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestError, setRequestError] = useState('');
+  const code = taskCode(task);
 
   useEffect(() => {
     setLogs(null);
@@ -829,12 +1074,36 @@ function TaskHistoryDrawer({ task, onClose }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  async function resolveRequest(action) {
+    setRequestBusy(true);
+    setRequestError('');
+    try {
+      await api.post(`/requests/${task.pending_request_id}/${action}`, {});
+      onChanged();
+      onClose();
+    } catch (e) {
+      setRequestError(e.message || "Couldn't resolve this request.");
+    } finally {
+      setRequestBusy(false);
+    }
+  }
+
+  const fields = [
+    ['Owner', task.employee_name],
+    ['Process', task.main_task_name],
+    ['Activity', task.task_activity_name],
+    ['Type', task.task_type_name || humanize(task.type)],
+    ['Priority', task.priority],
+    ['Due date', task.due_date],
+    ['Reviewer', task.reviewer_name],
+  ];
+
   return (
     <aside className="fixed top-16 bottom-0 right-0 z-30 w-full sm:w-[420px] bg-white border-l border-grey-100 shadow-xl shadow-grey-900/10 flex flex-col animate-fade-in-up">
       <div className="px-4 py-3.5 border-b border-grey-100 shrink-0 flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            {code && <span className="shrink-0 text-xs font-mono font-semibold bg-brand-50 text-brand-700 px-2 py-0.5 rounded-md border border-brand-100">{code}</span>}
+            <span className="shrink-0 text-xs font-mono font-semibold bg-brand-50 text-brand-700 px-2 py-0.5 rounded-md border border-brand-100">{code}</span>
             {task.employee_name && (
               <span className="flex items-center gap-1 text-xs text-grey-500 truncate">
                 <User className="w-3.5 h-3.5 shrink-0 text-grey-400" />
@@ -852,8 +1121,40 @@ function TaskHistoryDrawer({ task, onClose }) {
           </button>
         </div>
         <h2 className="font-bold text-grey-900 text-sm leading-snug">{task.description}</h2>
+        <Badge tone={task.status}>{task.status}</Badge>
       </div>
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs bg-grey-50 border border-grey-100 rounded-lg px-3 py-2.5">
+          {fields.map(([label, value]) => (
+            <div key={label}>
+              <div className="text-grey-400">{label}</div>
+              <div className="text-grey-800 font-medium">{value || '—'}</div>
+            </div>
+          ))}
+        </div>
+
+        {task.pending_request_id && (
+          <div className="border border-amber-200 bg-amber-50 rounded-lg p-3">
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-800">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              {task.pending_request_type === 'due_date_change'
+                ? `Due-date change requested → ${task.pending_request_due_date}`
+                : 'Support requested'}
+            </div>
+            {canAct ? (
+              <>
+                <div className="flex gap-2 mt-2">
+                  <Button size="sm" disabled={requestBusy} onClick={() => resolveRequest('approve')}>Approve</Button>
+                  <Button size="sm" variant="secondary" disabled={requestBusy} onClick={() => resolveRequest('reject')}>Reject</Button>
+                </div>
+                <ErrorBanner message={requestError} />
+              </>
+            ) : (
+              <p className="text-xs text-amber-700 mt-1">Waiting on a Leader's review.</p>
+            )}
+          </div>
+        )}
+
         <div className="flex items-start gap-2 bg-grey-50 border border-grey-100 rounded-lg px-3 py-2 text-xs text-grey-500 leading-relaxed">
           <HistoryIcon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-grey-400" />
           <span>A permanent record of every change to this task. <span className="text-amber-700 font-medium">Amber</span> entries mean the due date was changed from its original schedule.</span>

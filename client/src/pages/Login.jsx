@@ -78,7 +78,7 @@ export default function Login() {
         <LoginHeroIllustration />
         <div className="relative z-10 max-w-md animate-fade-in-up">
           <div className="inline-flex items-center gap-2 text-accent-400 text-xs font-bold tracking-[0.2em] mb-6 uppercase">
-            <span className="w-6 h-px bg-accent-400" /> Daily Scrum Monitoring
+            <span className="w-6 h-px bg-accent-400" /> Task Management
           </div>
           <h1 className="text-4xl font-bold text-white leading-tight mb-4">
             Every day's work,<br />in one clear place.

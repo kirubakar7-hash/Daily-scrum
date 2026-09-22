@@ -3,7 +3,6 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
-import TeamToday from './pages/TeamToday';
 import Dashboard from './pages/Dashboard';
 import History from './pages/History';
 import MyTasks from './pages/MyTasks';
@@ -41,9 +40,8 @@ function RequireRole({ roles, children }) {
   return children;
 }
 
+// Dashboard is the entry point to action for every role — see Dashboard.jsx.
 function Home() {
-  const { user } = useAuth();
-  if (user.role === 'employee' || user.role === 'senior_management') return <Navigate to="/my-tasks" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -63,14 +61,6 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/my-tasks" element={<MyTasks />} />
             <Route path="/all-tasks" element={<AllTasks />} />
-            <Route
-              path="/team"
-              element={
-                <RequireRole roles={['leader', 'admin', 'super_admin', 'senior_management']}>
-                  <TeamToday />
-                </RequireRole>
-              }
-            />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/history" element={<History />} />
             <Route

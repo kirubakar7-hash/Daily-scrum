@@ -184,26 +184,16 @@ test('scrum — resolving a task to Support Required requires a reason', async (
   const resolved = await withReason.json();
   assert.ok(resolved.request, 'a requests-table row must be created for the Leader to review');
   assert.equal(resolved.request.type, 'support');
-});
 
-test('scrum — confirming your own scrum shows up as "completed" on your leader\'s Team Today, for today only', async () => {
-  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
-
-  const before = await fetch(`${baseUrl}/api/scrum/today`, { headers: authed(reportALogin.token) });
-  assert.equal((await before.json()).session.status, 'pending', 'no session row exists yet, so this must default to pending, not error');
-
-  const confirm = await fetch(`${baseUrl}/api/scrum/confirm`, { method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({}) });
-  assert.equal(confirm.status, 200);
-
-  const after = await fetch(`${baseUrl}/api/scrum/today`, { headers: authed(reportALogin.token) });
-  assert.equal((await after.json()).session.status, 'completed');
-
-  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
-  const teamToday = await fetch(`${baseUrl}/api/leader/team-today?date=${today()}`, { headers: authed(midLeaderALogin.token) });
-  const { team } = await teamToday.json();
-  const reportARow = team.find((t) => t.employee_id === ids.reportAId);
-  assert.equal(reportARow.scrum_status, 'completed', 'the leader\'s Team Today must reflect the report\'s confirmed scrum for today');
-  assert.match(reportARow.scrum_completed_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/, 'must return the real confirmation timestamp, not just the status');
+  // Team Tasks' "Action Required" indicator (this session's replacement for the old standalone Requests
+  // tab) depends on org-tasks/team-tasks surfacing the pending request inline on the task's own row.
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const orgTasks = await fetch(`${baseUrl}/api/leader/org-tasks`, { headers: authed(saLogin.token) });
+  const { tasks } = await orgTasks.json();
+  const row = tasks.find((t) => t.id === commitment.id);
+  assert.ok(row, 'the task must still appear in org-tasks (Support Required tasks stay in the working view)');
+  assert.equal(row.pending_request_id, resolved.request.id, 'the row must carry the real pending request id, not a placeholder');
+  assert.equal(row.pending_request_type, 'support');
 });
 
 test('scrum — an employee cannot edit another employee\'s task; a leader can', async () => {
@@ -228,6 +218,59 @@ test('scrum — an employee cannot edit another employee\'s task; a leader can',
     method: 'POST', headers: authed(saLogin.token), body: JSON.stringify({ status: 'in_progress' }),
   });
   assert.equal(allowed.status, 200, 'a leader-tier role must be able to act on anyone\'s task, org-wide');
+});
+
+test('scrum PATCH — an Admin/Super Admin can reassign a task\'s Owner, Process, and Activity; a Leader cannot', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+
+  const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({
+      description: 'Reassignment test task', type: 'adhoc', due_date: '2026-09-20', employee_id: ids.reportAId,
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
+  });
+  const { commitment } = await createRes.json();
+
+  // A Leader can still edit fields they're always allowed to (description) on a task in their chain, but
+  // an Owner/Process/Activity reassignment they send must be silently ignored, not applied.
+  const leaderAttempt = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}`, {
+    method: 'PATCH', headers: authed(midLeaderALogin.token),
+    body: JSON.stringify({ description: 'Edited by a Leader', employee_id: ids.reportBId }),
+  });
+  assert.equal(leaderAttempt.status, 200);
+  const afterLeader = (await leaderAttempt.json()).commitment;
+  assert.equal(afterLeader.description, 'Edited by a Leader', 'a Leader\'s permitted field edit must still apply');
+  assert.equal(afterLeader.employee_id, ids.reportAId, 'a Leader\'s attempted owner reassignment must be silently ignored, not applied');
+
+  const adminEdit = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}`, {
+    method: 'PATCH', headers: authed(saLogin.token),
+    body: JSON.stringify({ employee_id: ids.reportBId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId }),
+  });
+  assert.equal(adminEdit.status, 200);
+  const afterAdmin = (await adminEdit.json()).commitment;
+  assert.equal(afterAdmin.employee_id, ids.reportBId, 'a Super Admin must be able to reassign the task\'s Owner');
+});
+
+test('scrum PATCH — an Admin cannot flip a task between Recurring and Ad-hoc via task_type_id', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const headers = authed(saLogin.token);
+
+  const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      description: 'Mechanic-switch test task', type: 'adhoc', due_date: '2026-09-20', employee_id: ids.reportAId,
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
+  });
+  const { commitment } = await createRes.json();
+
+  const recurringType = await db.prepare(`SELECT id FROM task_types WHERE mechanic = 'recurring' AND is_active = 1 LIMIT 1`).get();
+  const res = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}`, {
+    method: 'PATCH', headers, body: JSON.stringify({ task_type_id: recurringType.id }),
+  });
+  assert.equal(res.status, 400, 'an Ad-hoc task must not be switchable to a Recurring type through this general edit');
 });
 
 test('auth — self-service change-password works for any role, rejects a wrong current password, and revokes the old session', async () => {
@@ -702,39 +745,26 @@ test('hierarchy — a plain Employee\'s Team Tasks view only shows their own tas
   assert.ok(!taskIds.includes(ids.reportBTaskId), 'must not include a coworker\'s task');
 });
 
-test('hierarchy — Team Today includes Leaders/Admins in the roster for wide-open roles, not just Employees', async () => {
+test('hierarchy — org-tasks includes Leaders\'/Admins\' own tasks for wide-open roles, not just Employees\' tasks', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
   const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
-  const res = await fetch(`${baseUrl}/api/leader/team-today`, { headers: authed(adminLogin.token) });
-  const { team } = await res.json();
-  const rosterIds = team.map((t) => t.employee_id);
-  assert.ok(rosterIds.includes(ids.topLeaderId), 'an Admin must see a Leader in Team Today\'s roster, same as org-tasks already shows');
-  assert.ok(rosterIds.includes(ids.adminId), 'an Admin must see another Admin in Team Today\'s roster too');
-});
 
-test('team-month — returns every day of the requested month, scoped to the caller\'s roster, reflecting a real confirmed scrum', async () => {
-  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
-  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  // A task belonging to a Leader themselves (not one of their reports) — allActiveUsers() must include
+  // Leaders/Admins in its population, not just role='employee', or this would never show up for another
+  // wide-open-role viewer.
+  const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: authed(saLogin.token),
+    body: JSON.stringify({
+      description: 'Top Leader\'s own task', type: 'adhoc', due_date: '2026-09-20', employee_id: ids.topLeaderId,
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
+  });
+  assert.equal(createRes.status, 201);
+  const { commitment } = await createRes.json();
 
-  const confirm = await fetch(`${baseUrl}/api/scrum/confirm`, { method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({}) });
-  assert.equal(confirm.status, 200);
-
-  const monthStr = today().slice(0, 7);
-  const res = await fetch(`${baseUrl}/api/leader/team-month?month=${monthStr}`, { headers: authed(midLeaderALogin.token) });
-  assert.equal(res.status, 200);
-  const { month, days, team } = await res.json();
-  assert.equal(month, monthStr);
-
-  const [y, m] = monthStr.split('-').map(Number);
-  const expectedDayCount = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  assert.equal(days.length, expectedDayCount, 'must return exactly one entry per day of the month, no more, no less');
-  assert.ok(days[0].endsWith('-01') && days[days.length - 1].endsWith(String(expectedDayCount).padStart(2, '0')), 'days must run from the 1st to the last day of the month, in order');
-
-  const rosterIds = team.map((t) => t.employee_id);
-  assert.ok(rosterIds.includes(ids.reportAId), 'Mid Leader A\'s roster must include their direct report');
-  assert.ok(!rosterIds.includes(ids.reportBId), 'must not include someone outside the caller\'s reporting chain');
-
-  const reportARow = team.find((t) => t.employee_id === ids.reportAId);
-  assert.equal(reportARow.statuses[today()], 'completed', 'the confirmed scrum from above must show up on the correct day');
+  const res = await fetch(`${baseUrl}/api/leader/org-tasks`, { headers: authed(adminLogin.token) });
+  const { tasks } = await res.json();
+  assert.ok(tasks.some((t) => t.id === commitment.id), 'an Admin must see a Leader\'s own task in org-tasks, same as any Employee\'s');
 });
 
 test('hierarchy — Admin\'s own Dashboard counts every active user, org-wide, not just Employees', async () => {
@@ -1088,7 +1118,7 @@ test('history — "Overdue" is a real filter, completed_at is returned, and a tr
   assert.ok(!completedRows.some((c) => c.id === commitment.id), 'a pending task must not show up under the Completed filter just because it\'s also overdue');
 });
 
-test('dashboard — Org Dashboard\'s By Team shows a computed leader and a real scrum-completion rate, and Needs Attention is populated org-wide', async () => {
+test('dashboard — Org Dashboard\'s By Team shows a computed leader and real open-task counts, and Needs Attention is populated org-wide', async () => {
   const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
   const res = await fetch(`${baseUrl}/api/dashboard/org`, { headers: authed(saLogin.token) });
   assert.equal(res.status, 200);
@@ -1099,7 +1129,8 @@ test('dashboard — Org Dashboard\'s By Team shows a computed leader and a real 
   const computedTeam = data.by_team.find((t) => t.team_name === 'Computed Leader Team');
   assert.ok(computedTeam, 'the team created earlier in this file must be present');
   assert.equal(computedTeam.leader_name, 'Mid Leader A', 'By Team must show the same computed leader as the Teams tab does');
-  assert.ok('scrum_completed' in computedTeam, 'by_team rows must carry a real scrum-completion count, not just a headcount');
+  assert.ok('open_tasks' in computedTeam, 'by_team rows must carry a real open-task count, not just a headcount');
+  assert.ok(typeof data.pending_requests === 'number', 'Org Dashboard must return a real pending_requests count');
 
   assert.ok(data.attention_required, 'Org Dashboard must return an attention_required block, same shape as the Leader dashboard');
   assert.ok(Array.isArray(data.attention_required.support_requests));

@@ -7,8 +7,8 @@ const WIDE_OPEN_ROLES = ['super_admin', 'admin', 'senior_management'];
 
 /** The task list — Super Admin, Admin, and Senior Management see every task, org-wide, same as always.
  *  A Leader sees their own tasks plus everyone reporting to them, any depth. An Employee sees only their
- *  own. No Create Task button here — creating happens on My Tasks or the Leader's Daily Scrum -> Team
- *  Tasks tab, so there's one obvious place to do it, not three. */
+ *  own. No Create Task button here — creating (and assigning to anyone) happens on My Tasks, so there's
+ *  one obvious place to do it, not two. */
 export default function AllTasks() {
   const { user } = useAuth();
   const readOnly = user.role === 'senior_management';
