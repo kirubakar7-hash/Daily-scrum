@@ -4,6 +4,7 @@ import { db } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { recordAudit, auditDiff } from '../lib/audit.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { resolveDefaultCategoryId } from '../lib/masterData.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -23,17 +24,20 @@ router.get('/', asyncHandler(async (req, res) => {
 
 /** POST /api/main-tasks — Admin defines a new Main Task (Process), parked under a Category (Function).
  *  category_id is required — a Process must always belong to a Function, so History/reporting can never
- *  show a Process floating without one. */
+ *  show a Process floating without one. Auto-resolved when not given rather than asked for, since the
+ *  Admin UI no longer surfaces a Function picker when creating a Process — see resolveDefaultCategoryId. */
 router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
-  const { name, category_id, description } = req.body || {};
+  const { name, description } = req.body || {};
+  let { category_id } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Main Task name is required.' });
+  if (!category_id) category_id = await resolveDefaultCategoryId();
   if (!category_id) return res.status(400).json({ error: 'Choose the Function this Process belongs to.' });
   const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(category_id);
-  if (!category) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
+  if (!category) return res.status(400).json({ error: 'That Function is no longer available. Choose another.' });
   const id = uuid();
   try {
     await db.prepare(`INSERT INTO main_tasks (id, name, category_id, description, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(id, name.trim(), category_id || null, description || null, req.user.id, req.user.id);
+      .run(id, name.trim(), category_id, description || null, req.user.id, req.user.id);
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'A Main Task with this name already exists.' });
     throw e;
@@ -60,9 +64,14 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
       const categoryName = (r.category_name || '').trim();
       if (!name) throw new Error('Main Task name is required.');
       if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate Main Task name within this file.');
-      if (!categoryName) throw new Error('category_name is required — every Process must belong to a Function.');
-      const category_id = categoryByName.get(categoryName.toLowerCase());
-      if (!category_id) throw new Error(`Subtask "${categoryName}" was not found.`);
+      let category_id;
+      if (categoryName) {
+        category_id = categoryByName.get(categoryName.toLowerCase());
+        if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
+      } else {
+        category_id = await resolveDefaultCategoryId();
+        if (!category_id) throw new Error('category_name is required — more than one Function exists, so it can\'t be auto-picked.');
+      }
 
       const id = uuid();
       try {
@@ -91,7 +100,7 @@ router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (re
   if (category_id !== undefined) {
     if (!category_id) return res.status(400).json({ error: 'A Process must always belong to a Function — choose one instead of clearing it.' });
     const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(category_id);
-    if (!category) return res.status(400).json({ error: 'That subtask is no longer available. Choose another.' });
+    if (!category) return res.status(400).json({ error: 'That Function is no longer available. Choose another.' });
   }
   const after = {
     name: name !== undefined ? name.trim() : before.name,

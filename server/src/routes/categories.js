@@ -17,7 +17,7 @@ router.get('/', asyncHandler(async (req, res) => {
 /** POST /api/categories — Admin defines a new business category (e.g. Finance, Compliance). */
 router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const { name, description } = req.body || {};
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Subtask name is required.' });
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Function name is required.' });
   const id = uuid();
   try {
     await db.prepare(`INSERT INTO categories (id, name, description, created_by, updated_by) VALUES (?, ?, ?, ?, ?)`)
@@ -25,7 +25,7 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
   } catch (e) {
     // Postgres's unique_violation code (23505) — see the identical comment in taskTypes.js's POST / for
     // why this can't check e.message for 'UNIQUE' anymore (that was SQLite's error text).
-    if (e.code === '23505') return res.status(409).json({ error: 'A subtask with this name already exists.' });
+    if (e.code === '23505') return res.status(409).json({ error: 'A Function with this name already exists.' });
     throw e;
   }
   await recordAudit({ tableName: 'categories', recordId: id, fieldName: 'created', newValue: name, changedBy: req.user.id, changedByName: req.user.full_name });
@@ -44,15 +44,15 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
     try {
       const name = (r.name || '').trim();
       const description = (r.description || '').trim() || null;
-      if (!name) throw new Error('Subtask name is required.');
-      if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate subtask name within this file.');
+      if (!name) throw new Error('Function name is required.');
+      if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate Function name within this file.');
 
       const id = uuid();
       try {
         await db.prepare(`INSERT INTO categories (id, name, description, created_by, updated_by) VALUES (?, ?, ?, ?, ?)`)
           .run(id, name, description, req.user.id, req.user.id);
       } catch (e) {
-        if (e.code === '23505') throw new Error('A subtask with this name already exists.');
+        if (e.code === '23505') throw new Error('A Function with this name already exists.');
         throw e;
       }
       seenNames.add(name.toLowerCase());
@@ -68,9 +68,9 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
 /** PATCH /api/categories/:id — rename, edit description, or deactivate. */
 router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
-  if (!before) return res.status(404).json({ error: 'Subtask not found.' });
+  if (!before) return res.status(404).json({ error: 'Function not found.' });
   const { name, description, is_active, reason } = req.body || {};
-  if (name !== undefined && !name.trim()) return res.status(400).json({ error: 'Subtask name is required.' });
+  if (name !== undefined && !name.trim()) return res.status(400).json({ error: 'Function name is required.' });
   const after = {
     name: name !== undefined ? name.trim() : before.name,
     description: description !== undefined ? description : before.description,
@@ -86,7 +86,7 @@ router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (re
  *  Users/Teams/Task Types) so History never points at a category that no longer exists. */
 router.delete('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const category = await db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
-  if (!category) return res.status(404).json({ error: 'Subtask not found.' });
+  if (!category) return res.status(404).json({ error: 'Function not found.' });
 
   const usedCount = (await db.prepare('SELECT COUNT(*) c FROM commitments WHERE category_id = ?').get(req.params.id)).c;
   const templateCount = (await db.prepare('SELECT COUNT(*) c FROM recurring_activities WHERE category_id = ?').get(req.params.id)).c;
@@ -100,7 +100,7 @@ router.delete('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (r
       templateCount > 0 && `${templateCount} recurring template(s)`,
       mainTaskCount > 0 && `${mainTaskCount} Process(es)`,
     ].filter(Boolean);
-    return res.status(409).json({ error: `${parts.join(' and ')} already use this subtask. Deactivate it instead of deleting it.` });
+    return res.status(409).json({ error: `${parts.join(' and ')} already use this Function. Deactivate it instead of deleting it.` });
   }
 
   await recordAudit({ tableName: 'categories', recordId: req.params.id, fieldName: 'deleted', oldValue: category.name, changedBy: req.user.id, changedByName: req.user.full_name, reason: req.body?.reason || req.query?.reason });

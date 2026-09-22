@@ -8,6 +8,7 @@ import { withDelay, withLateness } from '../lib/delay.js';
 import { nextOccurrence, describeRule, validateRule, legacyFrequencyToRule } from '../lib/recurrence.js';
 import { insertOccurrence } from '../lib/recurringOccurrences.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { resolveDefaultCategoryId } from '../lib/masterData.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -136,11 +137,12 @@ router.post('/commitments', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Priority must be Low, Medium, or High.' });
   }
 
-  // Function → Process → Activity is required on every actual task — it answers "what area of the
-  // business is this for, and what type of work is it" (e.g. Finance → FP&A → Bank Reconciliation),
-  // not whether the task repeats. The master-data catalog itself enforces the same nesting (see
-  // mainTasks.js/taskActivities.js), so a task can never point at an orphaned Process or Activity.
-  const categoryId = b.category_id || null;
+  // Process → Activity is required on every actual task — it answers "what type of work is it" (e.g.
+  // FP&A → Bank Reconciliation), not whether the task repeats. Function (the level above Process) is no
+  // longer something anyone has to pick day to day — the org has exactly one today, so it's auto-resolved
+  // instead of asked for; it only becomes a real required choice again if a second Function ever exists.
+  let categoryId = b.category_id || null;
+  if (!categoryId) categoryId = await resolveDefaultCategoryId();
   if (!categoryId) return res.status(400).json({ error: 'Choose the Function this task belongs to.' });
   const chosenCategory = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
   if (!chosenCategory) return res.status(400).json({ error: 'That Function is no longer available. Choose another.' });
@@ -260,9 +262,14 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       }
 
       const categoryName = (r.category_name || '').trim();
-      if (!categoryName) throw new Error('category_name is required — every task must belong to a Function.');
-      const category_id = categoryByName.get(categoryName.toLowerCase());
-      if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
+      let category_id;
+      if (categoryName) {
+        category_id = categoryByName.get(categoryName.toLowerCase());
+        if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
+      } else {
+        category_id = await resolveDefaultCategoryId();
+        if (!category_id) throw new Error('category_name is required — more than one Function exists, so it can\'t be auto-picked.');
+      }
 
       const mainTaskName = (r.main_task_name || '').trim();
       if (!mainTaskName) throw new Error('main_task_name is required — every task must belong to a Process.');

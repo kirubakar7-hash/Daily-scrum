@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { recordAudit } from '../lib/audit.js';
 import { describeRule, validateRule, legacyFrequencyToRule, firstDueDate } from '../lib/recurrence.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { resolveDefaultCategoryId } from '../lib/masterData.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -53,9 +54,11 @@ async function createRecurringTask(b, req) {
     mechanic = type.mechanic;
   }
 
-  // Function → Process → Activity is required on every actual task, recurring templates included —
-  // same reasoning as the ad-hoc Create Task form in scrum.js.
-  const categoryId = b.category_id || null;
+  // Process → Activity is required on every actual task, recurring templates included — same reasoning
+  // as the ad-hoc Create Task form in scrum.js. Function is auto-resolved rather than asked for — see
+  // resolveDefaultCategoryId's own comment.
+  let categoryId = b.category_id || null;
+  if (!categoryId) categoryId = await resolveDefaultCategoryId();
   if (!categoryId) throw new Error('Choose the Function this task belongs to.');
   const category = await db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(categoryId);
   if (!category) throw new Error('That Function is no longer available. Choose another.');
@@ -171,9 +174,14 @@ router.post('/import', asyncHandler(async (req, res) => {
         if (!task_type_id) throw new Error(`Task type "${taskTypeName}" was not found.`);
       }
       const categoryName = (r.category_name || '').trim();
-      if (!categoryName) throw new Error('category_name is required — every task must belong to a Function.');
-      const category_id = categoryByName.get(categoryName.toLowerCase());
-      if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
+      let category_id;
+      if (categoryName) {
+        category_id = categoryByName.get(categoryName.toLowerCase());
+        if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
+      } else {
+        category_id = await resolveDefaultCategoryId();
+        if (!category_id) throw new Error('category_name is required — more than one Function exists, so it can\'t be auto-picked.');
+      }
 
       const mainTaskName = (r.main_task_name || '').trim();
       if (!mainTaskName) throw new Error('main_task_name is required — every task must belong to a Process.');
