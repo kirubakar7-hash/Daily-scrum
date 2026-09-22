@@ -5,6 +5,7 @@ const SUBJECT_LABELS = {
   commitments: 'Task', blockers: 'Blocker', actions: 'Action', escalations: 'Escalation',
   departments: 'Department', teams: 'Team', users: 'User', categories: 'Subtask',
   recurring_activities: 'Recurring task', task_types: 'Task type', main_tasks: 'Main Task',
+  task_activities: 'Activity',
 };
 
 const FIELD_LABELS = {
@@ -13,6 +14,7 @@ const FIELD_LABELS = {
   due_time: 'Due time', estimated_effort: 'Estimated effort', dependency: 'Dependency',
   dependency_owner: 'Waiting on', remarks: 'Remarks', expected_outcome: 'Expected outcome', mechanic: 'Behaviour',
   team_id: 'Team', department_id: 'Department', leader_user_id: 'Team leader',
+  category_id: 'Subtask', main_task_id: 'Main Task', task_activity_id: 'Activity',
 };
 
 // These fields store internal IDs, not anything a person would recognize — never show the raw value.

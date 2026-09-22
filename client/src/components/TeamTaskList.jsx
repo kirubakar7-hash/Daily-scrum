@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy, CalendarClock, History as HistoryIcon, User, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
@@ -9,7 +9,7 @@ import ImportButton from './ImportButton';
 import AuditTimeline from './AuditTimeline';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
-const EMPTY_TASK_FILTERS = { employee: '', type: '', priority: '', status: '', category: '', mainTask: '' };
+const EMPTY_TASK_FILTERS = { employee: '', type: '', priority: '', status: '', category: '', mainTask: '', taskActivity: '' };
 const today = new Date().toISOString().slice(0, 10);
 
 function csvEscape(v) {
@@ -40,6 +40,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
   const [employeeOptions, setEmployeeOptions] = useState([]);
   const [categoryOptions, setCategoryOptions] = useState([]);
   const [mainTaskOptions, setMainTaskOptions] = useState([]);
+  const [taskActivityOptions, setTaskActivityOptions] = useState([]);
 
   // Sourced from the org's canonical lists (not from whichever tasks happen to be loaded), same pattern
   // History.jsx already uses — otherwise someone with zero currently-open tasks can never be filtered to
@@ -48,6 +49,7 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
     api.get('/history/summary').then((d) => setEmployeeOptions(d.summary.map((s) => s.full_name).sort())).catch(() => {});
     api.get('/categories').then((d) => setCategoryOptions(d.categories.filter((c) => c.is_active).map((c) => c.name).sort())).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTaskOptions(d.main_tasks.filter((m) => m.is_active).map((m) => m.name).sort())).catch(() => {});
+    api.get('/task-activities').then((d) => setTaskActivityOptions(d.task_activities.filter((a) => a.is_active).map((a) => a.name).sort())).catch(() => {});
   }, []);
 
   function load(noticeText) {
@@ -123,15 +125,16 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
     && (!filters.status || t.status === filters.status)
     && (!filters.category || t.category_name === filters.category)
     && (!filters.mainTask || t.main_task_name === filters.mainTask)
+    && (!filters.taskActivity || t.task_activity_name === filters.taskActivity)
   ), [tasks, filters]);
   const filtersActive = Object.values(filters).some(Boolean);
   const isRowReadOnly = (t) => readOnly || !canActOn(t);
   const selectableTasks = useMemo(() => filteredTasks.filter((t) => !isRowReadOnly(t)), [filteredTasks, readOnly, canActOn]);
 
   function exportCsv() {
-    const header = ['Task', 'Employee', 'Type', 'Subtask', 'Main Task', 'Priority', 'Due', 'Status'];
+    const header = ['Task', 'Employee', 'Type', 'Subtask', 'Main Task', 'Activity', 'Priority', 'Due', 'Status'];
     const lines = [header.join(',')].concat(
-      filteredTasks.map((t) => [t.description, t.employee_name, t.task_type_name || t.type, t.category_name || '', t.main_task_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
+      filteredTasks.map((t) => [t.description, t.employee_name, t.task_type_name || t.type, t.category_name || '', t.main_task_name || '', t.task_activity_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
     );
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -176,8 +179,8 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <ImportButton
               entityLabel="Tasks"
-              headers={['employee_email', 'description', 'task_type_name', 'category_name', 'main_task_name', 'priority', 'due_date']}
-              example={{ employee_email: 'jane@company.com', description: 'Follow up with Procurement on the approved PR', task_type_name: '', category_name: '', main_task_name: '', priority: 'Medium', due_date: '' }}
+              headers={['employee_email', 'description', 'task_type_name', 'category_name', 'main_task_name', 'activity_name', 'priority', 'due_date']}
+              example={{ employee_email: 'jane@company.com', description: 'Follow up with Procurement on the approved PR', task_type_name: '', category_name: '', main_task_name: '', activity_name: '', priority: 'Medium', due_date: '' }}
               endpoint="/scrum/commitments/import"
               onDone={() => load()}
             />
@@ -240,6 +243,10 @@ export default function TeamTaskList({ assignees: assigneesProp, team, readOnly,
             <Select value={filters.mainTask} onChange={(e) => setFilters((f) => ({ ...f, mainTask: e.target.value }))}>
               <option value="">All main tasks</option>
               {mainTaskOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </Select>
+            <Select value={filters.taskActivity} onChange={(e) => setFilters((f) => ({ ...f, taskActivity: e.target.value }))}>
+              <option value="">All activities</option>
+              {taskActivityOptions.map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
             <Select value={filters.priority} onChange={(e) => setFilters((f) => ({ ...f, priority: e.target.value }))}>
               <option value="">All priorities</option>
@@ -621,6 +628,8 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
   const [categoryId, setCategoryId] = useState('');
   const [mainTasks, setMainTasks] = useState([]);
   const [mainTaskId, setMainTaskId] = useState('');
+  const [taskActivities, setTaskActivities] = useState([]);
+  const [taskActivityId, setTaskActivityId] = useState('');
   const [recurrenceRule, setRecurrenceRule] = useState(DEFAULT_RULE);
   const [priority, setPriority] = useState('Medium');
   const [dueDate, setDueDate] = useState(today);
@@ -636,15 +645,34 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
     }).catch(() => setLoadError("Couldn't load Task Types — try closing and reopening this form."));
     api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => setLoadError("Couldn't load Subtasks — try closing and reopening this form."));
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => setLoadError("Couldn't load Main Tasks — try closing and reopening this form."));
+    api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => setLoadError("Couldn't load Activities — try closing and reopening this form."));
   }, []);
 
   const selectedType = taskTypes.find((t) => t.id === taskTypeId);
   const isRecurring = selectedType?.mechanic === 'recurring';
   const mainTasksForCategory = mainTasks.filter((m) => !categoryId || m.category_id === categoryId);
+  const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (mainTaskId && !mainTasksForCategory.some((m) => m.id === mainTaskId)) setMainTaskId('');
   }, [categoryId, mainTasks]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (taskActivityId && !activitiesForMainTask.some((a) => a.id === taskActivityId)) setTaskActivityId('');
+  }, [mainTaskId, taskActivities]);
+
+  // Picking an Activity fills in the description automatically (still editable) so a standard, recurring
+  // piece of work doesn't need retyping every time. Switching to a different Activity updates the
+  // description again as long as it's still exactly what the last Activity auto-filled — the moment
+  // someone types their own edit, autoFilledValue.current no longer matches and their text is left alone.
+  const autoFilledValue = useRef(null);
+  function selectActivity(id) {
+    setTaskActivityId(id);
+    const activity = taskActivities.find((a) => a.id === id);
+    if (!activity) return;
+    setDescription((d) => (!d.trim() || d === autoFilledValue.current) ? activity.name : d);
+    autoFilledValue.current = activity.name;
+  }
 
   async function create() {
     setError('');
@@ -653,10 +681,10 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
     setSaving(true);
     try {
       await api.post('/scrum/commitments', {
-        employee_id: employeeId, description, task_type_id: taskTypeId || undefined, category_id: categoryId || undefined, main_task_id: mainTaskId || undefined, priority, due_date: dueDate,
+        employee_id: employeeId, description, task_type_id: taskTypeId || undefined, category_id: categoryId || undefined, main_task_id: mainTaskId || undefined, task_activity_id: taskActivityId || undefined, priority, due_date: dueDate,
         recurrence_rule: isRecurring ? recurrenceRule : undefined,
       });
-      setDescription('');
+      setDescription(''); setCategoryId(''); setMainTaskId(''); setTaskActivityId('');
       onCreated();
     } catch (e) {
       setError(e.message);
@@ -681,7 +709,7 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
         <Input label="Due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
       </div>
       <Textarea required label="Task description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Follow up with Procurement on the approved PR" />
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <Select label="Type" value={taskTypeId} onChange={(e) => setTaskTypeId(e.target.value)}>
           {taskTypes.map((t) => <option key={t.id} value={t.id}>{t.name}{t.mechanic === 'recurring' ? ' (repeats)' : ''}</option>)}
         </Select>
@@ -692,6 +720,10 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
         <Select label="Main Task" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
           <option value="">None</option>
           {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </Select>
+        <Select label="Activity" value={taskActivityId} onChange={(e) => selectActivity(e.target.value)}>
+          <option value="">None</option>
+          {activitiesForMainTask.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </Select>
         <Select label={<>Priority<InfoTip term="priority" /></>} value={priority} onChange={(e) => setPriority(e.target.value)}>
           {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}

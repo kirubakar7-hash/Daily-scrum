@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Users, UsersRound, Tag, Tags, Repeat, Plus, Check, UserPlus, ListTree } from 'lucide-react';
+import { Users, UsersRound, Tag, Tags, Repeat, Plus, Check, UserPlus, ListTree, ListChecks } from 'lucide-react';
 import { api } from '../lib/api';
 import { badgeClassFor, Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
@@ -13,6 +13,7 @@ const TABS = [
   ['Task Types', Tag],
   ['Subtasks', Tags],
   ['Main Tasks', ListTree],
+  ['Activities', ListChecks],
   ['Recurring Tasks', Repeat],
 ];
 
@@ -48,6 +49,7 @@ export default function Admin() {
         {tab === 'Task Types' && <TaskTypesTab />}
         {tab === 'Subtasks' && <CategoriesTab />}
         {tab === 'Main Tasks' && <MainTasksTab />}
+        {tab === 'Activities' && <ActivitiesTab />}
         {tab === 'Recurring Tasks' && <RecurringTasksTab />}
       </div>
     </div>
@@ -426,6 +428,165 @@ function MainTasksTab() {
                   <td><Badge tone={mt.is_active ? 'completed' : 'support_required'}>{mt.is_active ? 'Active' : 'Inactive'}</Badge></td>
                   <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(mt)}>{mt.is_active ? 'Deactivate' : 'Activate'}</button></td>
                   <td><DeleteButton confirmLabel={`Delete "${mt.name}"? This can't be undone.`} onConfirm={() => remove(mt)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <ErrorBanner message={loadError} />
+      {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
+      <ErrorBanner message={error} />
+    </Card>
+  );
+}
+
+/* ---------------- Activities (parked under a Main Task, one level below it) ---------------- */
+function ActivitiesTab() {
+  const [items, setItems] = useState(null);
+  const [mainTasks, setMainTasks] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [name, setName] = useState('');
+  const [categoryId, setCategoryId] = useState(''); // create-form only, to narrow the Main Task list below — not stored on the Activity itself
+  const [mainTaskId, setMainTaskId] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [savedId, setSavedId] = useState(null);
+
+  function load() {
+    setLoadError('');
+    api.get('/task-activities').then((d) => setItems(d.task_activities)).catch((e) => setLoadError(e.message || "Couldn't load Activities."));
+    api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
+    api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
+  }
+  useEffect(() => { load(); }, []);
+
+  const mainTasksForCategory = mainTasks.filter((m) => !categoryId || m.category_id === categoryId);
+
+  async function create() {
+    setError('');
+    if (!name.trim()) return setError('Name is required.');
+    try {
+      await api.post('/task-activities', { name, main_task_id: mainTaskId || null, description });
+      setName(''); setCategoryId(''); setMainTaskId(''); setDescription(''); setFormOpen(false); load();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function toggle(a) {
+    await api.patch(`/task-activities/${a.id}`, { is_active: a.is_active ? 0 : 1 });
+    load();
+  }
+
+  async function updateMainTask(a, newMainTaskId) {
+    setError('');
+    try {
+      await api.patch(`/task-activities/${a.id}`, { main_task_id: newMainTaskId || null });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function rename(a, newName) {
+    setError('');
+    try {
+      await api.patch(`/task-activities/${a.id}`, { name: newName });
+      load();
+      setSavedId(a.id);
+      setTimeout(() => setSavedId((id) => (id === a.id ? null : id)), 2000);
+    } catch (e) { setError(e.message); throw e; }
+  }
+
+  async function remove(a) {
+    setError('');
+    try {
+      await api.del(`/task-activities/${a.id}`);
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
+  if (items === null) {
+    if (loadError) {
+      return (
+        <Card>
+          <ErrorBanner message={loadError} />
+          <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>
+        </Card>
+      );
+    }
+    return <CardSkeleton lines={4} />;
+  }
+
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <p className="text-xs text-grey-400">
+          A standard, recurring piece of work under a Main Task — e.g. Main Task "FP&A" contains Activities like "Rolling forecast updates" or "Budget vs Actual variance analysis". Picking one on a task form fills in the description automatically.
+        </p>
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <ImportButton
+            entityLabel="Activities"
+            headers={['name', 'main_task_name', 'description']}
+            example={{ name: 'Rolling forecast updates', main_task_name: 'FP&A', description: '' }}
+            endpoint="/task-activities/import"
+            onDone={load}
+          />
+          <Button onClick={() => setFormOpen(true)}><Plus className="w-4 h-4" /> Add Activity</Button>
+        </div>
+      </div>
+      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Add Activity">
+        <div className="space-y-3">
+          <Input label="Activity name" placeholder="e.g. Rolling forecast updates" value={name} onChange={(e) => setName(e.target.value)} />
+          <Select label="Subtask (to help find the Main Task below)" value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setMainTaskId(''); }}>
+            <option value="">All subtasks</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+          <Select label="Main Task (optional)" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
+            <option value="">No Main Task</option>
+            {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </Select>
+          <Input label="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <ErrorBanner message={error} />
+          <Button onClick={create}><Plus className="w-4 h-4" /> Add Activity</Button>
+        </div>
+      </Modal>
+      {items.length === 0 ? (
+        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No Activities yet">
+          Add one above to get started.
+        </EmptyState>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm mt-3">
+            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Activity</th><th>Main Task</th><th>Status</th><th colSpan={2}></th></tr></thead>
+            <tbody>
+              {items.map((a, i) => (
+                <tr key={a.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
+                  <td className="py-2 pr-2">
+                    <input
+                      type="text"
+                      defaultValue={a.name}
+                      onBlur={(e) => { if (e.target.value.trim() && e.target.value !== a.name) rename(a, e.target.value); else e.target.value = a.name; }}
+                      className="w-40 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+                    />
+                    {savedId === a.id && (
+                      <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
+                        <Check className="w-3 h-3" /> Saved
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <select
+                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
+                      value={a.main_task_id || ''}
+                      onChange={(e) => updateMainTask(a, e.target.value)}
+                    >
+                      <option value="">No Main Task</option>
+                      {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </td>
+                  <td><Badge tone={a.is_active ? 'completed' : 'support_required'}>{a.is_active ? 'Active' : 'Inactive'}</Badge></td>
+                  <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(a)}>{a.is_active ? 'Deactivate' : 'Activate'}</button></td>
+                  <td><DeleteButton confirmLabel={`Delete "${a.name}"? This can't be undone.`} onConfirm={() => remove(a)} /></td>
                 </tr>
               ))}
             </tbody>
@@ -869,6 +1030,8 @@ function RecurringTasksTab() {
   const [taskTypeId, setTaskTypeId] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [mainTaskId, setMainTaskId] = useState('');
+  const [taskActivities, setTaskActivities] = useState([]);
+  const [taskActivityId, setTaskActivityId] = useState('');
   const [recurrenceRule, setRecurrenceRule] = useState(DEFAULT_RULE);
   const [priority, setPriority] = useState('Medium');
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
@@ -890,17 +1053,32 @@ function RecurringTasksTab() {
     }).catch(() => {});
     api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
+    api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => {});
     api.get('/users').then((d) => setEmployees(d.users.filter((u) => u.role === 'employee' && u.is_active))).catch(() => {});
   }
   useEffect(() => { load(); }, []);
 
-  // A Main Task only makes sense once its own Category is picked — keeps the Category -> Main Task ->
-  // Subtask nesting something the form actually enforces, not just a suggestion.
+  // A Main Task only makes sense once its own Category is picked, and an Activity only makes sense once
+  // its own Main Task is picked — keeps the Subtask -> Main Task -> Activity nesting something the form
+  // actually enforces, not just a suggestion.
   const mainTasksForCategory = mainTasks.filter((m) => !categoryId || m.category_id === categoryId);
+  const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
   useEffect(() => {
     if (mainTaskId && !mainTasksForCategory.some((m) => m.id === mainTaskId)) setMainTaskId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId]);
+  useEffect(() => {
+    if (taskActivityId && !activitiesForMainTask.some((a) => a.id === taskActivityId)) setTaskActivityId('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTaskId]);
+
+  // Picking an Activity fills in the title automatically (still editable) so a standard, recurring piece
+  // of work doesn't need retyping — matches the same convention as the ad-hoc Create Task form.
+  function selectActivity(id) {
+    setTaskActivityId(id);
+    const activity = taskActivities.find((a) => a.id === id);
+    if (activity) setTitle((t) => t.trim() ? t : activity.name);
+  }
 
   function toggleEmployee(id) {
     setEmployeeIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
@@ -913,10 +1091,10 @@ function RecurringTasksTab() {
     setSaving(true);
     try {
       await api.post('/recurring-tasks', {
-        title, task_type_id: taskTypeId || null, category_id: categoryId || null, main_task_id: mainTaskId || null,
+        title, task_type_id: taskTypeId || null, category_id: categoryId || null, main_task_id: mainTaskId || null, task_activity_id: taskActivityId || null,
         recurrence_rule: recurrenceRule, priority, start_date: startDate, employee_ids: employeeIds,
       });
-      setTitle(''); setEmployeeIds([]); setFormOpen(false);
+      setTitle(''); setCategoryId(''); setMainTaskId(''); setTaskActivityId(''); setEmployeeIds([]); setFormOpen(false);
       load();
     } catch (e) {
       setError(e.message);
@@ -947,8 +1125,8 @@ function RecurringTasksTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <ImportButton
           entityLabel="Recurring Tasks"
-          headers={['title', 'employee_emails', 'task_type_name', 'category_name', 'main_task_name', 'priority', 'start_date', 'frequency']}
-          example={{ title: 'Daily bank reconciliation', employee_emails: 'jane@company.com;alex@company.com', task_type_name: '', category_name: 'Finance', main_task_name: 'FP&A', priority: 'Medium', start_date: '2026-09-20', frequency: 'Daily' }}
+          headers={['title', 'employee_emails', 'task_type_name', 'category_name', 'main_task_name', 'activity_name', 'priority', 'start_date', 'frequency']}
+          example={{ title: 'Daily bank reconciliation', employee_emails: 'jane@company.com;alex@company.com', task_type_name: '', category_name: 'Finance', main_task_name: 'FP&A', activity_name: '', priority: 'Medium', start_date: '2026-09-20', frequency: 'Daily' }}
           endpoint="/recurring-tasks/import"
           onDone={load}
         />
@@ -976,6 +1154,10 @@ function RecurringTasksTab() {
           <Select label="Main Task (optional)" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
             <option value="">No Main Task</option>
             {mainTasksForCategory.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </Select>
+          <Select label="Activity (optional, fills in the title)" value={taskActivityId} onChange={(e) => selectActivity(e.target.value)}>
+            <option value="">No Activity</option>
+            {activitiesForMainTask.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </Select>
         </div>
         <div className="mb-3">

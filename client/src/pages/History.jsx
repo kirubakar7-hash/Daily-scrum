@@ -15,7 +15,7 @@ import {
   Check,
 } from 'lucide-react';
 
-const EMPTY_FILTERS = { date_from: '', date_to: '', type: '', status: '', category_id: '', main_task_id: '', employee_id: '', team_id: '', priority: '' };
+const EMPTY_FILTERS = { date_from: '', date_to: '', type: '', status: '', category_id: '', main_task_id: '', task_activity_id: '', employee_id: '', team_id: '', priority: '' };
 const TABS = [
   ['Browse', HistoryIcon],
   ['Search', Search],
@@ -41,6 +41,7 @@ export default function History() {
   const [commitments, setCommitments] = useState(null);
   const [categories, setCategories] = useState([]);
   const [mainTasks, setMainTasks] = useState([]);
+  const [taskActivities, setTaskActivities] = useState([]);
   const [teams, setTeams] = useState([]);
   const [employeeOptions, setEmployeeOptions] = useState([]);
   const [loadError, setLoadError] = useState('');
@@ -58,6 +59,7 @@ export default function History() {
     query(filtersFromSearchParams(searchParams));
     api.get('/categories').then((d) => setCategories(d.categories.filter((c) => c.is_active))).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
+    api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => {});
     api.get('/teams').then((d) => setTeams(d.teams.filter((t) => t.is_active))).catch(() => {});
     // Unfiltered, fetched once — so the Employee filter's own option list doesn't collapse to whoever
     // the current filter selection happens to include.
@@ -155,6 +157,10 @@ export default function History() {
                 <option value="">All main tasks</option>
                 {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </Select>
+              <Select label="Activity" value={filters.task_activity_id} onChange={(e) => setFilters((f) => ({ ...f, task_activity_id: e.target.value }))}>
+                <option value="">All activities</option>
+                {taskActivities.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </Select>
               <Select label="Priority" value={filters.priority} onChange={(e) => setFilters((f) => ({ ...f, priority: e.target.value }))}>
                 <option value="">All priorities</option>
                 {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -251,6 +257,7 @@ export default function History() {
                       <th className="pr-3 font-semibold">Type</th>
                       <th className="pr-3 font-semibold">Subtask</th>
                       <th className="pr-3 font-semibold">Main Task</th>
+                      <th className="pr-3 font-semibold">Activity</th>
                       <th className="pr-3 font-semibold">Status</th>
                       <th className="pr-3 font-semibold">Completed</th>
                       <th className="pr-3 font-semibold">Notes</th>
@@ -266,6 +273,7 @@ export default function History() {
                         <td className="pr-3"><Badge tone={c.type}>{c.type}</Badge></td>
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.category_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 whitespace-nowrap text-grey-600">{c.main_task_name || <span className="text-grey-300">—</span>}</td>
+                        <td className="pr-3 whitespace-nowrap text-grey-600">{c.task_activity_name || <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3"><Badge tone={c.status}>{humanize(c.status)}</Badge></td>
                         <td className="pr-3 whitespace-nowrap text-grey-500">{c.completed_at ? c.completed_at.slice(0, 10) : <span className="text-grey-300">—</span>}</td>
                         <td className="pr-3 max-w-[220px]">
