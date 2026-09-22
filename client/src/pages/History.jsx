@@ -77,8 +77,15 @@ export default function History() {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([k, v]) => v && params.set(k, v));
     const token = localStorage.getItem('dsm_token');
+    setLoadError('');
     fetch(`/api/history/export.csv?${params}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => res.blob())
+      .then((res) => {
+        // fetch() only rejects on a network-level failure — a 401/500 still resolves here, and without
+        // this check the JSON error body would get downloaded and named scrum-history.csv as if it had
+        // succeeded, instead of surfacing the actual error.
+        if (!res.ok) throw new Error(`Export failed (${res.status}).`);
+        return res.blob();
+      })
       .then((blob) => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -87,7 +94,8 @@ export default function History() {
         a.click();
         setExported(true);
         setTimeout(() => setExported(false), 2000);
-      });
+      })
+      .catch((e) => setLoadError(e.message || "Couldn't export History."));
   }
 
   return (
