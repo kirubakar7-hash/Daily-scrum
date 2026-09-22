@@ -67,6 +67,17 @@ before(async () => {
     .run(reportBTaskId, reportBId, todayStr, todayStr, todayStr, todayStr, reportBId, reportBId);
   Object.assign(ids, { reportATaskId, reportBTaskId });
 
+  // Shared Function/Process/Activity fixture — every actual task now requires all three (see
+  // scrum.js/recurringTasks.js), so any test that just needs "a task" as a fixture for unrelated
+  // behavior (requests, history, import, etc.) can reuse these instead of building its own each time.
+  const fixtureCategoryId = uuid();
+  await db.prepare(`INSERT INTO categories (id, name, created_by) VALUES (?, ?, ?)`).run(fixtureCategoryId, 'Test Fixture Finance', superAdminId);
+  const fixtureMainTaskId = uuid();
+  await db.prepare(`INSERT INTO main_tasks (id, name, category_id, created_by) VALUES (?, ?, ?, ?)`).run(fixtureMainTaskId, 'Test Fixture FP&A', fixtureCategoryId, superAdminId);
+  const fixtureActivityId = uuid();
+  await db.prepare(`INSERT INTO task_activities (id, name, main_task_id, created_by) VALUES (?, ?, ?, ?)`).run(fixtureActivityId, 'Test Fixture Activity', fixtureMainTaskId, superAdminId);
+  Object.assign(ids, { fixtureCategoryId, fixtureMainTaskId, fixtureActivityId });
+
   server = createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -153,7 +164,10 @@ test('scrum — resolving a task to Support Required requires a reason', async (
   const headers = authed(empLogin.token);
 
   const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
-    method: 'POST', headers, body: JSON.stringify({ description: 'Reconcile the ledger', type: 'adhoc', due_date: '2026-09-15' }),
+    method: 'POST', headers, body: JSON.stringify({
+      description: 'Reconcile the ledger', type: 'adhoc', due_date: '2026-09-15',
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
   });
   assert.equal(createRes.status, 201);
   const { commitment } = await createRes.json();
@@ -198,7 +212,10 @@ test('scrum — an employee cannot edit another employee\'s task; a leader can',
 
   const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
     method: 'POST', headers: authed(saLogin.token),
-    body: JSON.stringify({ description: "Super Admin's own task", type: 'adhoc', due_date: '2026-09-20', employee_id: ids.superAdminId }),
+    body: JSON.stringify({
+      description: "Super Admin's own task", type: 'adhoc', due_date: '2026-09-20', employee_id: ids.superAdminId,
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
   });
   const { commitment } = await createRes.json();
 
@@ -312,7 +329,10 @@ test('scrum — only Super Admin can delete a task they didn\'t create themselve
 
   const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
     method: 'POST', headers: authed(empLogin.token),
-    body: JSON.stringify({ description: 'Employee-created task', type: 'adhoc', due_date: '2026-09-20' }),
+    body: JSON.stringify({
+      description: 'Employee-created task', type: 'adhoc', due_date: '2026-09-20',
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
   });
   const { commitment } = await createRes.json();
 
@@ -408,7 +428,7 @@ test('import — recurring tasks: assigns by employee email, reports rows whose 
   const res = await fetch(`${baseUrl}/api/recurring-tasks/import`, {
     method: 'POST', headers: authed(saLogin.token),
     body: JSON.stringify({ rows: [
-      { title: 'Imported recurring task', employee_emails: 'employee@test.local; nobody-such@test.local', frequency: 'Daily' },
+      { title: 'Imported recurring task', employee_emails: 'employee@test.local; nobody-such@test.local', frequency: 'Daily', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
       { title: 'Nobody matches', employee_emails: 'nobody-such@test.local' },
     ] }),
   });
@@ -434,11 +454,16 @@ test('main tasks — a recurring task tagged with a Category and Main Task carri
   const { main_task: mainTask } = await mainTaskRes.json();
   assert.equal(mainTask.category_id, category.id);
 
+  const activityRes = await fetch(`${baseUrl}/api/task-activities`, {
+    method: 'POST', headers: authed(saLogin.token), body: JSON.stringify({ name: 'Monthly close checklist activity', main_task_id: mainTask.id }),
+  });
+  const { task_activity: taskActivity } = await activityRes.json();
+
   const recurringRes = await fetch(`${baseUrl}/api/recurring-tasks`, {
     method: 'POST', headers: authed(saLogin.token),
     body: JSON.stringify({
       title: 'Monthly close checklist', employee_ids: [ids.employeeId],
-      category_id: category.id, main_task_id: mainTask.id, frequency: 'Daily',
+      category_id: category.id, main_task_id: mainTask.id, task_activity_id: taskActivity.id, frequency: 'Daily',
     }),
   });
   assert.equal(recurringRes.status, 201);
@@ -494,6 +519,74 @@ test('task activities — a task tagged with an Activity carries it through, can
 
   const blockedDelete = await fetch(`${baseUrl}/api/task-activities/${activity.id}`, { method: 'DELETE', headers });
   assert.equal(blockedDelete.status, 409, 'an Activity already used by a task must be blocked from deletion, like Main Task/Category/Task Type');
+});
+
+test('finance structure — a task cannot be created without Function, Process, and Activity', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const headers = authed(saLogin.token);
+
+  const noCategory = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({ employee_id: ids.employeeId, description: 'Missing Function', type: 'adhoc', due_date: '2026-09-25' }),
+  });
+  assert.equal(noCategory.status, 400);
+  assert.match((await noCategory.json()).error, /function/i);
+
+  const noMainTask = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({
+      employee_id: ids.employeeId, description: 'Missing Process', type: 'adhoc', due_date: '2026-09-25', category_id: ids.fixtureCategoryId,
+    }),
+  });
+  assert.equal(noMainTask.status, 400);
+  assert.match((await noMainTask.json()).error, /process/i);
+
+  const noActivity = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({
+      employee_id: ids.employeeId, description: 'Missing Activity', type: 'adhoc', due_date: '2026-09-25',
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId,
+    }),
+  });
+  assert.equal(noActivity.status, 400);
+  assert.match((await noActivity.json()).error, /activity/i);
+});
+
+test('finance structure — Reviewer defaults to the employee\'s manager but can be overridden, and a Function/Process cannot be deleted while a child record is parked under it', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const headers = authed(saLogin.token);
+
+  const defaulted = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({
+      employee_id: ids.reportAId, description: 'Reviewer default test', type: 'adhoc', due_date: '2026-09-25',
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
+  });
+  assert.equal(defaulted.status, 201);
+  const { commitment: defaultedCommitment } = await defaulted.json();
+  assert.equal(defaultedCommitment.reviewer_id, ids.midLeaderAId, 'Reviewer must default to the employee\'s own manager when not specified');
+
+  const overridden = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({
+      employee_id: ids.reportAId, description: 'Reviewer override test', type: 'adhoc', due_date: '2026-09-25',
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId, reviewer_id: ids.topLeaderId,
+    }),
+  });
+  assert.equal(overridden.status, 201);
+  const { commitment: overriddenCommitment } = await overridden.json();
+  assert.equal(overriddenCommitment.reviewer_id, ids.topLeaderId, 'an explicitly chosen Reviewer must override the manager default');
+
+  // A brand-new Function/Process pair, unused by any task — the delete-guard here must fire purely
+  // because of the parent/child master-data relationship, not because of task usage.
+  const categoryRes = await fetch(`${baseUrl}/api/categories`, { method: 'POST', headers, body: JSON.stringify({ name: 'Empty Function QA' }) });
+  const { category: emptyCategory } = await categoryRes.json();
+  const mainTaskRes = await fetch(`${baseUrl}/api/main-tasks`, { method: 'POST', headers, body: JSON.stringify({ name: 'Empty Process QA', category_id: emptyCategory.id }) });
+  const { main_task: emptyMainTask } = await mainTaskRes.json();
+  const activityRes = await fetch(`${baseUrl}/api/task-activities`, { method: 'POST', headers, body: JSON.stringify({ name: 'Unused Activity QA', main_task_id: emptyMainTask.id }) });
+  assert.equal(activityRes.status, 201);
+
+  const blockedCategoryDelete = await fetch(`${baseUrl}/api/categories/${emptyCategory.id}`, { method: 'DELETE', headers });
+  assert.equal(blockedCategoryDelete.status, 409, 'a Function with a Process still parked under it must not be deletable, even with zero tasks using either');
+
+  const blockedMainTaskDelete = await fetch(`${baseUrl}/api/main-tasks/${emptyMainTask.id}`, { method: 'DELETE', headers });
+  assert.equal(blockedMainTaskDelete.status, 409, 'a Process with an Activity still parked under it must not be deletable, even with zero tasks using either');
 });
 
 test('hierarchy — a Leader can view and act on a direct report\'s task', async () => {
@@ -730,7 +823,10 @@ test('requests — once resolved, a second approve/reject attempt on the same re
   const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
   const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
     method: 'POST', headers: authed(reportALogin.token),
-    body: JSON.stringify({ description: 'Double-resolve fixture', type: 'adhoc', due_date: '2026-09-20' }),
+    body: JSON.stringify({
+      description: 'Double-resolve fixture', type: 'adhoc', due_date: '2026-09-20',
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
   });
   assert.equal(createRes.status, 201);
   const { commitment } = await createRes.json();
@@ -759,9 +855,9 @@ test('import — tasks: a valid row succeeds, an unknown email fails, and a Lead
   const res = await fetch(`${baseUrl}/api/scrum/commitments/import`, {
     method: 'POST', headers: authed(midLeaderALogin.token),
     body: JSON.stringify({ rows: [
-      { employee_email: 'reporta@test.local', description: 'Imported task for a direct report' },
-      { employee_email: 'nobody-such@test.local', description: 'Should fail — unknown email' },
-      { employee_email: 'reportb@test.local', description: 'Should fail — outside Mid Leader A\'s chain' },
+      { employee_email: 'reporta@test.local', description: 'Imported task for a direct report', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
+      { employee_email: 'nobody-such@test.local', description: 'Should fail — unknown email', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
+      { employee_email: 'reportb@test.local', description: 'Should fail — outside Mid Leader A\'s chain', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
     ] }),
   });
   assert.equal(res.status, 200);
@@ -781,7 +877,10 @@ test('task history — records a "created" entry, is visible to the task\'s owne
   const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
   const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
     method: 'POST', headers: authed(midLeaderALogin.token),
-    body: JSON.stringify({ employee_id: ids.reportAId, description: 'Task with a history to check', type: 'adhoc' }),
+    body: JSON.stringify({
+      employee_id: ids.reportAId, description: 'Task with a history to check', type: 'adhoc',
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
   });
   assert.equal(createRes.status, 201);
   const { commitment } = await createRes.json();
@@ -848,7 +947,10 @@ test('history — "Overdue" is a real filter, completed_at is returned, and a tr
   const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
   const create = await fetch(`${baseUrl}/api/scrum/commitments`, {
     method: 'POST', headers: authed(reportALogin.token),
-    body: JSON.stringify({ description: 'Overdue test task', type: 'adhoc', due_date: '2020-01-01' }),
+    body: JSON.stringify({
+      description: 'Overdue test task', type: 'adhoc', due_date: '2020-01-01',
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
   });
   assert.equal(create.status, 201);
   const { commitment } = await create.json();
