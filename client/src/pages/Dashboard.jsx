@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Users, UsersRound, CheckCircle2, Clock, LifeBuoy, ListTodo,
   Repeat, Zap, ClipboardList, Bell, TrendingUp,
-  Target, Mail,
+  Target,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
@@ -67,66 +67,6 @@ function SplitCard({ label, pct, explain, tone, icon: Icon }) {
   );
 }
 
-/** The on-demand "send now" trigger the user asked for, in place of a scheduled/automatic email:
- *  checks /status-email-ready on mount so it can explain a missing SMTP/recipient setup instead of
- *  just failing silently when clicked, then posts to /send-status-email and reports what happened. */
-function StatusEmailButton() {
-  const [ready, setReady] = useState(null);
-  const [state, setState] = useState('idle'); // idle | sending | sent | failed
-  const [message, setMessage] = useState('');
-
-  useEffect(() => {
-    api.get('/dashboard/status-email-ready')
-      .then(setReady)
-      .catch(() => setReady({ configured: false, recipients: [] }));
-  }, []);
-
-  function send() {
-    setState('sending');
-    setMessage('');
-    api.post('/dashboard/send-status-email')
-      .then((d) => {
-        setState('sent');
-        setMessage(`Sent to ${d.sent_to.length} recipient${d.sent_to.length === 1 ? '' : 's'} — ${d.task_count} outstanding task${d.task_count === 1 ? '' : 's'} listed.`);
-      })
-      .catch((e) => {
-        setState('failed');
-        setMessage(e.message || "Couldn't send the email.");
-      });
-  }
-
-  if (ready && !ready.configured) {
-    return (
-      <Card dense className="animate-fade-in-up border-amber-200 bg-amber-50">
-        <div className="flex items-center gap-2 text-sm text-amber-800">
-          <Mail className="w-4 h-4 shrink-0" />
-          Status email isn't set up yet — the server needs SMTP and recipient settings before this can be used.
-        </div>
-      </Card>
-    );
-  }
-
-  return (
-    <Card dense className="animate-fade-in-up">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="min-w-0">
-          <div className="text-sm font-bold text-grey-800 flex items-center gap-1.5">
-            <Mail className="w-4 h-4 text-brand-600 shrink-0" /> Daily Status Email
-          </div>
-          <div className="text-xs text-grey-400 mt-0.5">
-            Sends today's summary and every outstanding task to {ready ? `${ready.recipients.length} stakeholder${ready.recipients.length === 1 ? '' : 's'}` : '…'}.
-          </div>
-        </div>
-        <Button size="sm" onClick={send} disabled={!ready || state === 'sending'}>
-          {state === 'sending' ? 'Sending…' : 'Send Status Update'}
-        </Button>
-      </div>
-      {state === 'sent' && <div className="mt-2 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg px-2.5 py-1.5">{message}</div>}
-      {state === 'failed' && <div className="mt-2 text-xs font-medium text-accent-700 bg-accent-50 rounded-lg px-2.5 py-1.5">{message}</div>}
-    </Card>
-  );
-}
-
 function OrgDashboard({ data, role }) {
   const heading = role === 'super_admin' ? 'System Control Center' : 'Organization Overview';
   const sub = role === 'super_admin'
@@ -159,7 +99,6 @@ function OrgDashboard({ data, role }) {
         )}
       </Card>
 
-      {role === 'super_admin' && <StatusEmailButton />}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <KpiCard dense className="animate-fade-in-up" style={rowDelay(0)} icon={<Users className="w-4 h-4" />} label="Active Users" value={data.active_users} to="/admin" tone="brand" />
         <KpiCard dense className="animate-fade-in-up" style={rowDelay(1)} icon={<UsersRound className="w-4 h-4" />} label="Teams" value={data.teams} to="/admin" tone="brand" />
@@ -222,8 +161,6 @@ function LeaderDashboard({ data, role }) {
           {' '}· {data.pending} task{data.pending === 1 ? '' : 's'} pending
         </p>
       </div>
-
-      <StatusEmailButton />
 
       {/* Bottlenecks first — matches how a leader actually scans this page: what needs me right now,
           before the supporting numbers. Every item below is unchanged from before, just promoted higher. */}

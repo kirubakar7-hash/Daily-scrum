@@ -3,8 +3,6 @@ import { db, today } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { withDelay } from '../lib/delay.js';
 import { recordAudit } from '../lib/audit.js';
-import { buildStatusEmail } from '../lib/statusEmail.js';
-import { sendMail, mailIsConfigured, stakeholderRecipients } from '../lib/mail.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { subordinateIds } from '../lib/scope.js';
 import { attachComputedLeaders } from './teams.js';
@@ -251,38 +249,6 @@ router.get('/org', requireRole('super_admin', 'senior_management'), asyncHandler
       support_requests: orgSupportRequests,
     },
   });
-}));
-
-/** GET /api/dashboard/status-email-ready — lets the button know, before it's clicked, whether email is
- *  actually configured and who it would go to, so the UI can explain a missing setup rather than fail silently. */
-router.get('/status-email-ready', requireRole('super_admin', 'admin', 'leader'), asyncHandler((req, res) => {
-  res.json({ configured: mailIsConfigured(), recipients: stakeholderRecipients() });
-}));
-
-/** POST /api/dashboard/send-status-email — the on-demand "send now" button. Builds today's outstanding-work
- *  summary fresh (never a stale cached copy) and emails it to the configured stakeholder list. */
-router.post('/send-status-email', requireRole('super_admin', 'admin', 'leader'), asyncHandler(async (req, res) => {
-  const recipients = stakeholderRecipients();
-  if (recipients.length === 0) {
-    return res.status(400).json({ error: 'No recipients configured — set STAKEHOLDER_EMAILS in the server .env file.' });
-  }
-  if (!mailIsConfigured()) {
-    return res.status(400).json({ error: 'Email is not configured yet — set SMTP_HOST, SMTP_USER, and SMTP_PASS in the server .env file.' });
-  }
-
-  const { subject, html, text, taskCount } = buildStatusEmail();
-  try {
-    await sendMail({ to: recipients, subject, html, text });
-  } catch (e) {
-    return res.status(502).json({ error: `Could not send the email: ${e.message}` });
-  }
-
-  await recordAudit({
-    tableName: 'status_email', recordId: today(), fieldName: 'sent',
-    newValue: `${recipients.length} recipient(s), ${taskCount} outstanding task(s)`,
-    changedBy: req.user.id, changedByName: req.user.full_name,
-  });
-  res.json({ ok: true, sent_to: recipients, task_count: taskCount });
 }));
 
 export default router;

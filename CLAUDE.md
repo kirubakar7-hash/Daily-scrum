@@ -490,24 +490,11 @@ Dashboard numbers must reconcile with database records.
 
 # 16. STATUS EMAIL
 
-Only authorized:
-
-* Leader
-* Admin
-* Super Admin
-
-may send status emails unless the business requirement explicitly changes.
-
-Senior Management should remain excluded from sending unless explicitly requested.
-
-Email must:
-
-* Use authorized current data.
-* Avoid unauthorized employee information.
-* Prevent arbitrary recipient manipulation.
-* Be audited.
-* Never expose credentials.
-* Fail gracefully if not configured.
+**Removed (2026-09-22).** The on-demand "Send Status Update" feature (built 2026-09-15) was taken out
+of the app rather than configured — never had real SMTP credentials or a stakeholder list, and the
+decision was to remove it instead of setting that up. No code, route, UI, or environment variable for
+it remains. Section number kept, not reused, so any older reference to "section 16" still points here
+rather than silently meaning something else.
 
 ---
 

@@ -1,4 +1,4 @@
-import { Pencil, Trash2, Plus, Mail, CalendarClock, LifeBuoy } from 'lucide-react';
+import { Pencil, Trash2, Plus, CalendarClock, LifeBuoy } from 'lucide-react';
 import { EmptyState, IllustrationEmptyList, Timeline, humanize } from './ui';
 
 const SUBJECT_LABELS = {
@@ -25,7 +25,6 @@ const ID_FIELDS = new Set(['team_id', 'department_id', 'leader_user_id']);
 function describeLog(l) {
   const subject = SUBJECT_LABELS[l.table_name] || humanize(l.table_name);
 
-  if (l.table_name === 'status_email' && l.field_name === 'sent') return { icon: Mail, tone: 'success', title: 'Daily status email sent', detail: l.new_value };
   if (l.field_name === 'created') return { icon: Plus, tone: 'success', title: `${subject} created`, detail: l.new_value };
   if (l.field_name === 'deleted') return { icon: Trash2, tone: 'accent', title: `${subject} deleted`, detail: l.old_value };
   if (l.field_name === 'password') return { icon: Pencil, tone: 'brand', title: `${subject} password was reset`, detail: null };
