@@ -66,6 +66,12 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
   }
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (!ROLE_LABELS[role]) return res.status(400).json({ error: 'Invalid role.' });
+  // requireRole above lets both Admin and Super Admin reach this route — without this, an Admin could
+  // mint a brand-new, unprotected Super Admin account for themselves (is_super_admin_protected only
+  // guards the one designated account, not the role itself), a full privilege escalation.
+  if (role === 'super_admin' && req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Only a Super Admin can create another Super Admin account.' });
+  }
   const existing = await db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(email.trim());
   if (existing) return res.status(400).json({ error: 'A user with that email already exists.' });
 
@@ -107,6 +113,9 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
       if (seenEmails.has(email.toLowerCase())) throw new Error('Duplicate email within this file.');
       if (password.length < 8) throw new Error('Password must be at least 8 characters.');
       if (!ROLE_LABELS[role]) throw new Error(`Invalid role "${role}". Must be one of: ${Object.keys(ROLE_LABELS).join(', ')}.`);
+      // Same privilege-escalation guard as the single-create route above — a bulk CSV import is otherwise
+      // an unguarded second path for an Admin to mint themselves a Super Admin account.
+      if (role === 'super_admin' && req.user.role !== 'super_admin') throw new Error('Only a Super Admin can create another Super Admin account.');
       const existing = await db.prepare('SELECT id FROM users WHERE lower(email) = lower(?)').get(email);
       if (existing) throw new Error('A user with that email already exists.');
       let team_id = null;
@@ -150,6 +159,12 @@ router.patch('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (re
     return res.status(400).json({ error: "You can't deactivate or change the role of the account you're currently logged in as." });
   }
   if (roleChanging && !ROLE_LABELS[role]) return res.status(400).json({ error: 'Invalid role.' });
+  // Closes the same privilege-escalation gap as POST / and POST /import: without this, an Admin could
+  // PATCH any ordinary (non-protected) user's role to super_admin — the is_super_admin_protected guard
+  // above only protects the one designated account, not the super_admin role in general.
+  if (roleChanging && role === 'super_admin' && req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Only a Super Admin can promote someone to Super Admin.' });
+  }
 
   // Deactivating, or demoting away from a manager-capable role, someone who still has active direct
   // reports would silently orphan their accountability line — those reports' manager_id keeps pointing
@@ -238,10 +253,16 @@ router.delete('/:id', requireRole('super_admin', 'admin'), asyncHandler(async (r
     });
   }
 
-  await recordAudit({ tableName: 'users', recordId: target.id, fieldName: 'deleted', oldValue: `${target.full_name} (${target.email})`, changedBy: req.user.id, changedByName: req.user.full_name, reason: req.body?.reason || req.query?.reason });
-  await db.prepare('DELETE FROM recurring_activities WHERE employee_id = ?').run(target.id);
-  await db.prepare('DELETE FROM scrum_sessions WHERE employee_id = ?').run(target.id);
-  await db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+  // Same reasoning as scrum.js's commitment-delete route: these are three separate round trips to a
+  // remote Postgres connection, not one local write — without a transaction, a dropped connection or
+  // timeout partway through could leave the audit log saying "deleted" while the user row (or a child
+  // row) still exists.
+  await db.transaction(async () => {
+    await recordAudit({ tableName: 'users', recordId: target.id, fieldName: 'deleted', oldValue: `${target.full_name} (${target.email})`, changedBy: req.user.id, changedByName: req.user.full_name, reason: req.body?.reason || req.query?.reason });
+    await db.prepare('DELETE FROM recurring_activities WHERE employee_id = ?').run(target.id);
+    await db.prepare('DELETE FROM scrum_sessions WHERE employee_id = ?').run(target.id);
+    await db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+  });
   res.json({ ok: true });
 }));
 

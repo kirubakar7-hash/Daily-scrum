@@ -29,6 +29,13 @@ function recordFailedAttempt(email) {
   loginAttempts.set(email, entry);
 }
 
+// A fixed, valid bcrypt hash (same cost factor as every real password hash below) with no real password
+// behind it — comparing against this when no active user was found costs roughly the same CPU time as
+// comparing against a real hash. Without this, "no such account" returns fast (a lookup only) while
+// "wrong password on a real account" returns measurably slower (lookup + bcrypt), even though both return
+// the identical error message — a timing side-channel an attacker could use to enumerate valid emails.
+const DUMMY_HASH = bcrypt.hashSync('no-real-password-is-ever-compared-against-this-hash', 10);
+
 router.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
@@ -39,12 +46,11 @@ router.post('/login', asyncHandler(async (req, res) => {
   }
 
   const user = await db.prepare('SELECT * FROM users WHERE lower(email) = lower(?)').get(email.trim());
-  if (!user || !user.is_active) {
-    recordFailedAttempt(normalizedEmail);
-    return res.status(401).json({ error: 'Incorrect email or password.' });
-  }
-  const ok = bcrypt.compareSync(password, user.password_hash);
-  if (!ok) {
+  const validUser = user && user.is_active;
+  // Always run exactly one bcrypt compare, win or lose, so a non-existent/inactive email and a wrong
+  // password on a real account take the same amount of time to respond (see DUMMY_HASH above).
+  const ok = bcrypt.compareSync(password, validUser ? user.password_hash : DUMMY_HASH);
+  if (!validUser || !ok) {
     recordFailedAttempt(normalizedEmail);
     return res.status(401).json({ error: 'Incorrect email or password.' });
   }

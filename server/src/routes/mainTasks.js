@@ -51,7 +51,9 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
  *  category_id the same way the other import endpoints resolve names to IDs. */
 router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-  const categories = await db.prepare('SELECT id, name FROM categories').all();
+  // Active only — matching the single-create route's own check (below) so a CSV import can't park a new
+  // Process under a Function that's been deactivated, something the single-create form already refuses.
+  const categories = await db.prepare('SELECT id, name FROM categories WHERE is_active = 1').all();
   const categoryByName = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c.id]));
   const seenNames = new Set();
   const results = [];
@@ -67,7 +69,7 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
       let category_id;
       if (categoryName) {
         category_id = categoryByName.get(categoryName.toLowerCase());
-        if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
+        if (!category_id) throw new Error(`Function "${categoryName}" was not found or is no longer available.`);
       } else {
         category_id = await resolveDefaultCategoryId();
         if (!category_id) throw new Error('category_name is required — more than one Function exists, so it can\'t be auto-picked.');

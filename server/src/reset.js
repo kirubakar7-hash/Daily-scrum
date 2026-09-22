@@ -7,7 +7,7 @@ import { db } from './db.js';
 
 if (process.env.NODE_ENV === 'production' && process.argv[2] !== '--force') {
   console.error('Refusing to reset a production database without --force. This permanently deletes all business data.');
-  console.error(`It would run against: ${process.env.DB_PATH || '(local default path)'}`);
+  console.error(`It would run against: ${process.env.DATABASE_URL ? process.env.DATABASE_URL.replace(/:\/\/[^@]*@/, '://***@') : '(no DATABASE_URL set)'}`);
   process.exit(1);
 }
 
@@ -35,6 +35,13 @@ const wipeTables = [
   'scrum_sessions',
   'recurring_activities',
   'system_settings',
+  // Master data (Function -> Process -> Activity) is reset along with categories below, same as
+  // everything else here — child tables first (task_activities references main_tasks, which references
+  // categories) since Postgres enforces foreign keys with no ON DELETE clause on any of these, unlike
+  // SQLite's old effectively-unenforced default. Deleting categories before these existed would abort
+  // this whole script mid-way with a foreign-key violation, leaving a half-reset database.
+  'task_activities',
+  'main_tasks',
 ];
 
 for (const table of wipeTables) {

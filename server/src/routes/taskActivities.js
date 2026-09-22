@@ -48,7 +48,9 @@ router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, r
  *  main_task_id the same way the other import endpoints resolve names to IDs. */
 router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-  const mainTasks = await db.prepare('SELECT id, name FROM main_tasks').all();
+  // Active only — matching the single-create route's own check (below) so a CSV import can't park a new
+  // Activity under a Process that's been deactivated, something the single-create form already refuses.
+  const mainTasks = await db.prepare('SELECT id, name FROM main_tasks WHERE is_active = 1').all();
   const mainTaskByName = new Map(mainTasks.map((m) => [m.name.trim().toLowerCase(), m.id]));
   const seenNames = new Set();
   const results = [];
@@ -63,7 +65,7 @@ router.post('/import', requireRole('super_admin', 'admin'), asyncHandler(async (
       if (seenNames.has(name.toLowerCase())) throw new Error('Duplicate Activity name within this file.');
       if (!mainTaskName) throw new Error('main_task_name is required — every Activity must belong to a Process.');
       const main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
-      if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found.`);
+      if (!main_task_id) throw new Error(`Main Task "${mainTaskName}" was not found or is no longer available.`);
 
       const id = uuid();
       try {

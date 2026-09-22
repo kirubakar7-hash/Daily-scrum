@@ -228,13 +228,16 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
   const users = await db.prepare('SELECT id, email FROM users').all();
   const userByEmail = new Map(users.map((u) => [u.email.trim().toLowerCase(), u.id]));
-  const taskTypes = await db.prepare('SELECT id, name, mechanic FROM task_types').all();
+  // Active only, on every one of these four lookups — matching the single-create route's own checks
+  // (below, and lines 131/147/152/157) so a bulk CSV import can't create a task against a Task Type,
+  // Function, Process, or Activity that's been deactivated, something single-create already refuses.
+  const taskTypes = await db.prepare('SELECT id, name, mechanic FROM task_types WHERE is_active = 1').all();
   const taskTypeByName = new Map(taskTypes.map((t) => [t.name.trim().toLowerCase(), t]));
-  const categories = await db.prepare('SELECT id, name FROM categories').all();
+  const categories = await db.prepare('SELECT id, name FROM categories WHERE is_active = 1').all();
   const categoryByName = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c.id]));
-  const mainTasks = await db.prepare('SELECT id, name FROM main_tasks').all();
+  const mainTasks = await db.prepare('SELECT id, name FROM main_tasks WHERE is_active = 1').all();
   const mainTaskByName = new Map(mainTasks.map((m) => [m.name.trim().toLowerCase(), m.id]));
-  const activities = await db.prepare('SELECT id, name FROM task_activities').all();
+  const activities = await db.prepare('SELECT id, name FROM task_activities WHERE is_active = 1').all();
   const activityByName = new Map(activities.map((a) => [a.name.trim().toLowerCase(), a.id]));
   const results = [];
 
@@ -256,7 +259,7 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       const taskTypeName = (r.task_type_name || '').trim();
       if (taskTypeName) {
         const chosenType = taskTypeByName.get(taskTypeName.toLowerCase());
-        if (!chosenType) throw new Error(`Task type "${taskTypeName}" was not found.`);
+        if (!chosenType) throw new Error(`Task type "${taskTypeName}" was not found or is no longer available.`);
         if (chosenType.mechanic !== 'adhoc') throw new Error(`"${taskTypeName}" is a Recurring-type — use the Recurring Tasks import in Admin instead.`);
         task_type_id = chosenType.id;
       }
@@ -265,7 +268,7 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       let category_id;
       if (categoryName) {
         category_id = categoryByName.get(categoryName.toLowerCase());
-        if (!category_id) throw new Error(`Function "${categoryName}" was not found.`);
+        if (!category_id) throw new Error(`Function "${categoryName}" was not found or is no longer available.`);
       } else {
         category_id = await resolveDefaultCategoryId();
         if (!category_id) throw new Error('category_name is required — more than one Function exists, so it can\'t be auto-picked.');
@@ -274,12 +277,12 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       const mainTaskName = (r.main_task_name || '').trim();
       if (!mainTaskName) throw new Error('main_task_name is required — every task must belong to a Process.');
       const main_task_id = mainTaskByName.get(mainTaskName.toLowerCase());
-      if (!main_task_id) throw new Error(`Process "${mainTaskName}" was not found.`);
+      if (!main_task_id) throw new Error(`Process "${mainTaskName}" was not found or is no longer available.`);
 
       const activityName = (r.activity_name || '').trim();
       if (!activityName) throw new Error('activity_name is required — every task must belong to an Activity.');
       const task_activity_id = activityByName.get(activityName.toLowerCase());
-      if (!task_activity_id) throw new Error(`Activity "${activityName}" was not found.`);
+      if (!task_activity_id) throw new Error(`Activity "${activityName}" was not found or is no longer available.`);
 
       let reviewer_id = null;
       const reviewerEmail = (r.reviewer_email || '').trim();
