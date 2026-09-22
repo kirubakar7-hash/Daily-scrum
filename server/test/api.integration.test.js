@@ -662,6 +662,55 @@ test('requests — deleting a task with a still-pending request against it leave
   assert.equal(logs.length, 1, 'the pending request must not just vanish — its auto-rejection needs a trace, like every other resolution in this flow');
 });
 
+test('requests — the atomic claim (UPDATE ... WHERE status=pending) lets exactly one of two truly concurrent resolutions win', async () => {
+  // Exercises the actual mechanism approve()/reject() rely on directly, at the SQL level — an HTTP-level
+  // race (two fetch() calls via Promise.all) isn't reliably tight enough to force both requests' initial
+  // reads to land before either write commits, since a fast sequential completion (call A fully finishes,
+  // including its own read, mid-request business logic, and write, before call B's read even runs) also
+  // produces "one wins, one loses" and would pass a looser test without ever touching this guard. This
+  // test removes that ambiguity by firing the two conditional UPDATEs concurrently with no application
+  // logic in between, which is exactly the tight-window case the guard exists for.
+  const requestId = uuid();
+  await db.prepare(`INSERT INTO requests (id, commitment_id, type, requested_by, status) VALUES (?, ?, 'due_date_change', ?, 'pending')`)
+    .run(requestId, ids.reportATaskId, ids.reportAId);
+
+  const claim = (status) => db.prepare(`UPDATE requests SET status=?, resolved_at=datetime('now') WHERE id=? AND status='pending'`).run(status, requestId);
+  const [approveClaim, rejectClaim] = await Promise.all([claim('approved'), claim('rejected')]);
+  const winners = [approveClaim.changes, rejectClaim.changes];
+  assert.deepEqual(winners.sort(), [0, 1], 'exactly one of the two concurrent conditional updates must affect a row — the other must affect zero, never both');
+
+  const final = await db.prepare('SELECT status FROM requests WHERE id = ?').get(requestId);
+  assert.ok(['approved', 'rejected'].includes(final.status), 'the request must land in exactly one terminal state');
+});
+
+test('requests — once resolved, a second approve/reject attempt on the same request is refused, not silently reapplied', async () => {
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const createRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: authed(reportALogin.token),
+    body: JSON.stringify({ description: 'Double-resolve fixture', type: 'adhoc', due_date: '2026-09-20' }),
+  });
+  assert.equal(createRes.status, 201);
+  const { commitment } = await createRes.json();
+  const requestRes = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/request-due-date-change`, {
+    method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({ requested_due_date: '2099-02-02' }),
+  });
+  assert.equal(requestRes.status, 201);
+  const { request } = await requestRes.json();
+
+  const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const headers = authed(midLeaderALogin.token);
+  const firstApprove = await fetch(`${baseUrl}/api/requests/${request.id}/approve`, { method: 'POST', headers });
+  assert.equal(firstApprove.status, 200);
+
+  const secondApprove = await fetch(`${baseUrl}/api/requests/${request.id}/approve`, { method: 'POST', headers });
+  assert.ok([400, 409].includes(secondApprove.status), 'a second approve on an already-resolved request must be refused, not reapplied');
+  const secondReject = await fetch(`${baseUrl}/api/requests/${request.id}/reject`, { method: 'POST', headers });
+  assert.ok([400, 409].includes(secondReject.status), 'rejecting an already-approved request must be refused too');
+
+  const finalCommitment = await db.prepare('SELECT due_date FROM commitments WHERE id = ?').get(commitment.id);
+  assert.equal(finalCommitment.due_date, '2099-02-02', 'the due date must reflect the one real approval, unaffected by the two refused re-attempts');
+});
+
 test('import — tasks: a valid row succeeds, an unknown email fails, and a Leader cannot import a task for someone outside their reporting chain', async () => {
   const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
   const res = await fetch(`${baseUrl}/api/scrum/commitments/import`, {
