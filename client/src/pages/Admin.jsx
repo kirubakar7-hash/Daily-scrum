@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Users, UsersRound, Tag, Tags, Repeat, Plus, Check, UserPlus, ListTree, ListChecks } from 'lucide-react';
+import { Users, UsersRound, Tag, Repeat, Plus, Check, UserPlus, ListTree, ListChecks } from 'lucide-react';
 import { api } from '../lib/api';
 import { getBusinessDate } from '../lib/businessDate';
 import { badgeClassFor, Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
@@ -8,11 +8,15 @@ import RecurrencePicker, { DEFAULT_RULE } from '../components/RecurrencePicker';
 import ImportButton from '../components/ImportButton';
 import { useAuth } from '../lib/AuthContext';
 
+// "Functions" (categories.js) is deliberately not a visible tab here — the org has exactly one Function
+// today, auto-resolved behind the scenes (see server/src/lib/masterData.js), so there's no day-to-day
+// decision left for anyone to make on this screen. The full CRUD (CategoriesTab, below) and its backend
+// route are untouched and still reachable by adding 'Functions' back to this list, if a second Function
+// is ever genuinely needed.
 const TABS = [
   ['Users', Users],
   ['Teams', UsersRound],
   ['Task Types', Tag],
-  ['Functions', Tags],
   ['Processes', ListTree],
   ['Activities', ListChecks],
   ['Recurring Tasks', Repeat],
