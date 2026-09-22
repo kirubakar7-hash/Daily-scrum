@@ -56,6 +56,16 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
     return res.status(403).json({ error: 'You can only act on requests for people who report to you.' });
   }
   const leaderNote = req.body?.leader_note || null;
+
+  // Claims the request atomically before any side effect runs. The plain status check above (read, then
+  // decide) has a race window: two concurrent calls — a double-click, or two leaders resolving the same
+  // request at once — can both read status='pending' before either write lands, and both go on to apply
+  // their own side effects to the same commitment. Only the request whose UPDATE actually flips a still-
+  // pending row proceeds; the other gets 409 here instead of silently double-processing.
+  const claim = await db.prepare(`UPDATE requests SET status='approved', resolved_by=?, resolved_at=datetime('now'), leader_note=?, updated_at=datetime('now') WHERE id=? AND status='pending'`)
+    .run(req.user.id, leaderNote, request.id);
+  if (claim.changes === 0) return res.status(409).json({ error: 'This request was just resolved by someone else.' });
+
   const ownerId = commitment.employee_id;
   const ownerName = await employeeName(ownerId);
 
@@ -88,9 +98,6 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
     });
   }
 
-  await db.prepare(`UPDATE requests SET status='approved', resolved_by=?, resolved_at=datetime('now'), leader_note=?, updated_at=datetime('now') WHERE id=?`)
-    .run(req.user.id, leaderNote, request.id);
-
   res.json({
     request: await db.prepare('SELECT * FROM requests WHERE id = ?').get(request.id),
     commitment: await db.prepare('SELECT * FROM commitments WHERE id = ?').get(commitment.id),
@@ -115,6 +122,12 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
     }
   }
   const leaderNote = req.body?.leader_note || null;
+
+  // Same atomic claim as approve() above — guards against a concurrent approve()/reject() racing on the
+  // same request.
+  const claim = await db.prepare(`UPDATE requests SET status='rejected', resolved_by=?, resolved_at=datetime('now'), leader_note=?, updated_at=datetime('now') WHERE id=? AND status='pending'`)
+    .run(req.user.id, leaderNote, request.id);
+  if (claim.changes === 0) return res.status(409).json({ error: 'This request was just resolved by someone else.' });
 
   if (commitment && request.type === 'support') {
     const ownerId = commitment.employee_id;
@@ -150,9 +163,6 @@ router.post('/:id/reject', asyncHandler(async (req, res) => {
       changedBy: req.user.id, changedByName: req.user.full_name, reason: leaderNote,
     });
   }
-
-  await db.prepare(`UPDATE requests SET status='rejected', resolved_by=?, resolved_at=datetime('now'), leader_note=?, updated_at=datetime('now') WHERE id=?`)
-    .run(req.user.id, leaderNote, request.id);
 
   res.json({
     request: await db.prepare('SELECT * FROM requests WHERE id = ?').get(request.id),
