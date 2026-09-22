@@ -709,3 +709,88 @@ test('task history — records a "created" entry, is visible to the task\'s owne
   const asUnrelated = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/history`, { headers: authed(midLeaderBLogin.token) });
   assert.equal(asUnrelated.status, 403, 'a Leader outside this task\'s reporting chain must not see its history');
 });
+
+test('users — PATCH cannot deactivate or demote a Leader who still has active direct reports', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+
+  const deactivate = await fetch(`${baseUrl}/api/users/${ids.midLeaderAId}`, {
+    method: 'PATCH', headers: authed(saLogin.token), body: JSON.stringify({ is_active: false }),
+  });
+  assert.equal(deactivate.status, 409, 'Mid Leader A still has Report A reporting to them');
+  assert.match((await deactivate.json()).error, /active report/i);
+
+  const demote = await fetch(`${baseUrl}/api/users/${ids.midLeaderAId}`, {
+    method: 'PATCH', headers: authed(saLogin.token), body: JSON.stringify({ role: 'employee' }),
+  });
+  assert.equal(demote.status, 409, 'demoting away from a manager-capable role must be blocked the same way');
+
+  // Confirm nothing actually changed — a rejected request must not have side effects.
+  const stillActive = await db.prepare('SELECT is_active, role FROM users WHERE id = ?').get(ids.midLeaderAId);
+  assert.equal(stillActive.is_active, 1);
+  assert.equal(stillActive.role, 'leader');
+});
+
+test('users — Reports To rejects a deactivated manager, both on create and on edit', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const headers = authed(saLogin.token);
+
+  const throwawayId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'leader')`)
+    .run(throwawayId, 'Throwaway Leader', 'throwaway@test.local', bcrypt.hashSync('Throwaway123', 10));
+  const deactivateThrowaway = await fetch(`${baseUrl}/api/users/${throwawayId}`, { method: 'PATCH', headers, body: JSON.stringify({ is_active: false }) });
+  assert.equal(deactivateThrowaway.status, 200, 'a leader with zero reports must still be deactivatable');
+
+  const onEdit = await fetch(`${baseUrl}/api/users/${ids.reportAId}`, { method: 'PATCH', headers, body: JSON.stringify({ manager_id: throwawayId }) });
+  assert.equal(onEdit.status, 400);
+  assert.match((await onEdit.json()).error, /deactivated/i);
+
+  const onCreate = await fetch(`${baseUrl}/api/users`, {
+    method: 'POST', headers, body: JSON.stringify({ full_name: 'New Hire', email: 'newhire@test.local', password: 'NewHire123', role: 'employee', manager_id: throwawayId }),
+  });
+  assert.equal(onCreate.status, 400);
+  assert.match((await onCreate.json()).error, /deactivated/i);
+});
+
+test('history — "Overdue" is a real filter, completed_at is returned, and a truncation flag exists', async () => {
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const create = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: authed(reportALogin.token),
+    body: JSON.stringify({ description: 'Overdue test task', type: 'adhoc', due_date: '2020-01-01' }),
+  });
+  assert.equal(create.status, 201);
+  const { commitment } = await create.json();
+
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const overdueRes = await fetch(`${baseUrl}/api/history/commitments?employee_id=${ids.reportAId}&status=overdue`, { headers: authed(saLogin.token) });
+  const { commitments: overdueRows, commitments_truncated } = await overdueRes.json();
+  assert.ok(overdueRows.some((c) => c.id === commitment.id), 'a past-due, not-completed task must show up under the Overdue filter');
+  assert.equal(typeof commitments_truncated, 'boolean', 'the truncation flag must always be present, even when false');
+
+  const completedRes = await fetch(`${baseUrl}/api/history/commitments?employee_id=${ids.reportAId}&status=completed`, { headers: authed(saLogin.token) });
+  const { commitments: completedRows } = await completedRes.json();
+  assert.ok(!completedRows.some((c) => c.id === commitment.id), 'a pending task must not show up under the Completed filter just because it\'s also overdue');
+});
+
+test('dashboard — Org Dashboard\'s By Team shows a computed leader and a real scrum-completion rate, and Needs Attention is populated org-wide', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const res = await fetch(`${baseUrl}/api/dashboard/org`, { headers: authed(saLogin.token) });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+
+  // Reuses the team created by the earlier "teams — a team's leader is computed..." test (Mid Leader A
+  // and Report A were assigned to it there, with Mid Leader A as the computed leader) — same DB, same file.
+  const computedTeam = data.by_team.find((t) => t.team_name === 'Computed Leader Team');
+  assert.ok(computedTeam, 'the team created earlier in this file must be present');
+  assert.equal(computedTeam.leader_name, 'Mid Leader A', 'By Team must show the same computed leader as the Teams tab does');
+  assert.ok('scrum_completed' in computedTeam, 'by_team rows must carry a real scrum-completion count, not just a headcount');
+
+  assert.ok(data.attention_required, 'Org Dashboard must return an attention_required block, same shape as the Leader dashboard');
+  assert.ok(Array.isArray(data.attention_required.support_requests));
+  assert.ok(Array.isArray(data.attention_required.delayed_commitments));
+});
+
+test('scrum — the orphaned Escalations endpoints were removed, not just left unreachable from the UI', async () => {
+  const { body: empLogin } = await login('employee@test.local', 'EmpPass123');
+  const res = await fetch(`${baseUrl}/api/scrum/escalations`, { method: 'POST', headers: authed(empLogin.token), body: JSON.stringify({ issue: 'test' }) });
+  assert.equal(res.status, 404, 'the route itself should no longer exist');
+});
