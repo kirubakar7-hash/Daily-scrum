@@ -453,6 +453,49 @@ test('main tasks — a recurring task tagged with a Category and Main Task carri
   assert.equal(blockedDelete.status, 409, 'a Main Task already used by a task or template must be blocked from deletion, like Category and Task Type');
 });
 
+test('task activities — a task tagged with an Activity carries it through, cannot use an inactive Activity, and cannot be deleted while in use', async () => {
+  const { body: saLogin } = await login('super@test.local', 'BrandNewPassword123');
+  const headers = authed(saLogin.token);
+
+  const categoryRes = await fetch(`${baseUrl}/api/categories`, { method: 'POST', headers, body: JSON.stringify({ name: 'Finance QA' }) });
+  const { category } = await categoryRes.json();
+  const mainTaskRes = await fetch(`${baseUrl}/api/main-tasks`, { method: 'POST', headers, body: JSON.stringify({ name: 'GL Ops QA', category_id: category.id }) });
+  const { main_task: mainTask } = await mainTaskRes.json();
+
+  const activityRes = await fetch(`${baseUrl}/api/task-activities`, {
+    method: 'POST', headers, body: JSON.stringify({ name: 'Journal entry QA', main_task_id: mainTask.id }),
+  });
+  assert.equal(activityRes.status, 201);
+  const { task_activity: activity } = await activityRes.json();
+  assert.equal(activity.main_task_id, mainTask.id);
+
+  const listRes = await fetch(`${baseUrl}/api/task-activities`, { headers });
+  const { task_activities: listed } = await listRes.json();
+  const found = listed.find((a) => a.id === activity.id);
+  assert.equal(found.main_task_name, 'GL Ops QA', 'the list endpoint must join in the Main Task name');
+
+  const taskRes = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({
+      employee_id: ids.employeeId, description: 'Post journal entries', type: 'adhoc', due_date: '2026-09-25',
+      category_id: category.id, main_task_id: mainTask.id, task_activity_id: activity.id,
+    }),
+  });
+  assert.equal(taskRes.status, 201);
+  const { commitment } = await taskRes.json();
+  assert.equal(commitment.task_activity_id, activity.id, 'the commitment must carry the Activity through');
+
+  await fetch(`${baseUrl}/api/task-activities/${activity.id}`, { method: 'PATCH', headers, body: JSON.stringify({ is_active: false }) });
+  const rejectedTask = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({
+      employee_id: ids.employeeId, description: 'Should fail', type: 'adhoc', due_date: '2026-09-25', task_activity_id: activity.id,
+    }),
+  });
+  assert.equal(rejectedTask.status, 400, 'an inactive Activity must not be assignable to a new task');
+
+  const blockedDelete = await fetch(`${baseUrl}/api/task-activities/${activity.id}`, { method: 'DELETE', headers });
+  assert.equal(blockedDelete.status, 409, 'an Activity already used by a task must be blocked from deletion, like Main Task/Category/Task Type');
+});
+
 test('hierarchy — a Leader can view and act on a direct report\'s task', async () => {
   const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
   const view = await fetch(`${baseUrl}/api/scrum/today?employee_id=${ids.reportAId}`, { headers: authed(midLeaderALogin.token) });
