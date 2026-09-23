@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Filter, X } from 'lucide-react';
+import { usePopoverPanel } from '../lib/usePopoverPanel';
 import { Button, Input } from './ui';
 
-/* Excel-style column filtering, shared by every data table that has it (Tasks, History's Task Records).
- * The state and matching logic lives in lib/useColumnFilters.js; these are the two visual pieces. */
+/* Excel-style column filtering, shared by every data table that has it. The state and matching logic
+ * lives in lib/useColumnFilters.js; positioning/focus-trap plumbing lives in lib/usePopoverPanel.js;
+ * these are the two visual pieces. */
 
 const POPOVER_WIDTH = 256;
-const POPOVER_MIN_HEIGHT = 280;
 
 /** The funnel button beside a column name. Solid blue while that column is filtered. */
 export function FilterFunnel({ label, active, open, onToggle }) {
@@ -26,32 +27,6 @@ export function FilterFunnel({ label, active, open, onToggle }) {
   );
 }
 
-// Measured against the visual viewport (what's actually on screen, excluding a phone's open keyboard).
-// Opens below the header button, or above when that side has more room; never shorter than
-// POPOVER_MIN_HEIGHT, sliding over the header if it must, so the option list can't collapse to nothing.
-// `renderedHeight` (once known) lets that slide stop at the popover's real height, not its maximum.
-function popoverPosition(anchorEl, renderedHeight) {
-  const rect = anchorEl.getBoundingClientRect();
-  const vv = window.visualViewport;
-  const viewTop = vv ? vv.offsetTop : 0;
-  const viewLeft = vv ? vv.offsetLeft : 0;
-  const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-  const viewRight = vv ? vv.offsetLeft + vv.width : window.innerWidth;
-  const viewHeight = viewBottom - viewTop;
-  const width = Math.min(POPOVER_WIDTH, viewRight - viewLeft - 16);
-  const left = Math.max(viewLeft + 8, Math.min(rect.left, viewRight - width - 8));
-  const below = viewBottom - rect.bottom - 14;
-  const above = rect.top - viewTop - 14;
-  const openBelow = below >= POPOVER_MIN_HEIGHT || below >= above;
-  const maxHeight = Math.min(420, viewHeight - 16, Math.max(openBelow ? below : above, POPOVER_MIN_HEIGHT));
-  const height = renderedHeight ? Math.min(renderedHeight, maxHeight) : maxHeight;
-  if (openBelow) {
-    return { top: Math.max(viewTop + 8, Math.min(rect.bottom + 6, viewBottom - 8 - height)), left, width, maxHeight };
-  }
-  const bottom = window.innerHeight - viewBottom + 8;
-  return { bottom: Math.max(bottom, Math.min(window.innerHeight - rect.top + 6, window.innerHeight - viewTop - 8 - height)), left, width, maxHeight };
-}
-
 /** Excel-style per-column filter menu. Portaled to document.body and fixed-positioned under its header
  *  button, same reason Modal portals: this app's animate-* classes leave a lingering transform on
  *  ancestors, which would otherwise re-anchor `position: fixed` and clip it inside the table's
@@ -65,55 +40,10 @@ export function ColumnFilterPopover({ column, currentValue, options, anchorEl, o
   const [checked, setChecked] = useState(() => new Set(currentValue.length ? currentValue : options.map((o) => o.value)));
   const [searchChecked, setSearchChecked] = useState(() => new Set());
   const [query, setQuery] = useState('');
-  const [pos, setPos] = useState(() => popoverPosition(anchorEl));
   // On a touch screen, autofocusing the search box pops the keyboard up over the checkboxes.
   const [finePointer] = useState(() => window.matchMedia?.('(pointer: fine)').matches ?? true);
-  const popoverRef = useRef(null);
-
-  // Keyboard-driven closes hand focus back to the funnel button. An outside click doesn't, since that
-  // click has already put focus where the user wanted it.
-  const closeToAnchor = useCallback((action) => { action(); anchorEl.focus(); }, [anchorEl]);
-
-  useEffect(() => {
-    function onPointerDown(e) {
-      if (popoverRef.current?.contains(e.target) || anchorEl.contains(e.target)) return;
-      onClose();
-    }
-    function onKey(e) {
-      if (e.key === 'Escape') { closeToAnchor(onClose); return; }
-      // Portaled to the end of <body>, so without this Tab would walk straight off the page.
-      if (e.key !== 'Tab' || !popoverRef.current?.contains(document.activeElement)) return;
-      const focusable = popoverRef.current.querySelectorAll('button:not([disabled]), input:not([disabled])');
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && (document.activeElement === first || document.activeElement === popoverRef.current)) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    }
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [anchorEl, onClose, closeToAnchor]);
-
-  // Re-measure every frame while open rather than only on scroll/resize: a notice appearing or vanishing
-  // above the table shifts the header without firing either event. One rect read per frame, and a
-  // re-render only when the position actually changes.
-  useEffect(() => {
-    let frame = 0;
-    let last = JSON.stringify(popoverPosition(anchorEl));
-    function track() {
-      if (!anchorEl.isConnected) { onClose(); return; }
-      const next = popoverPosition(anchorEl, popoverRef.current?.offsetHeight);
-      const key = JSON.stringify(next);
-      if (key !== last) { last = key; setPos(next); }
-      frame = requestAnimationFrame(track);
-    }
-    frame = requestAnimationFrame(track);
-    return () => cancelAnimationFrame(frame);
-  }, [anchorEl, onClose]);
+  const stableOnClose = useCallback(() => onClose(), [onClose]);
+  const { pos, panelRef: popoverRef, closeToAnchor } = usePopoverPanel(anchorEl, stableOnClose, { width: POPOVER_WIDTH });
 
   const matches = (term) => (o) => o.label.toLowerCase().includes(term);
   const searching = query.trim() !== '';

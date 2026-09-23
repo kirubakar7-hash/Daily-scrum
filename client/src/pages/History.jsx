@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatBusinessDate } from '../lib/businessDate';
-import { useColumnFilters } from '../lib/useColumnFilters';
+import { useDataTable } from '../lib/useDataTable';
 import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationSearch, Input, Select, Skeleton, humanize } from '../components/ui';
-import { ColumnFilterPopover, FilterFunnel } from '../components/ColumnFilter';
+import { DataTableView } from '../components/DataTable';
 import HelpBanner from '../components/HelpBanner';
 import {
   History as HistoryIcon,
@@ -26,20 +26,43 @@ const TABS = [
 const PRIORITIES = ['Low', 'Medium', 'High'];
 const NO_ROWS = [];
 
-// Excel-style filters on the Task Records table, narrowing the records "Show me" loaded (up to the
-// server's 500 cap). `value` is what each cell displays; Type and Status cells go through Badge, which
-// humanizes. Notes is free-form text plus badges, so it has no filter.
+// DataTable's column config — the single source of truth for what Task Records shows, sorts, filters and
+// searches by. `value` is what each cell displays (used for sort/filter/search alike); `render` is only
+// for cells that need more than that raw text (a Badge, or Notes' badges-plus-reason). Type and Status
+// cells go through Badge, which humanizes, so their filter-list labels do too.
 const RECORD_COLUMNS = [
-  { key: 'code', label: 'Code', value: (c) => c.code || '' },
-  { key: 'date', label: 'Date', value: (c) => c.scrum_date || '' },
-  { key: 'employee', label: 'Employee', value: (c) => c.full_name || '' },
-  { key: 'task', label: 'Task', value: (c) => c.description || '' },
-  { key: 'type', label: 'Type', value: (c) => c.type || '', format: humanize },
-  { key: 'process', label: 'Process', value: (c) => c.main_task_name || '' },
-  { key: 'activity', label: 'Activity', value: (c) => c.task_activity_name || '' },
-  { key: 'reviewer', label: 'Reviewer', value: (c) => c.reviewer_name || '' },
-  { key: 'status', label: 'Status', value: (c) => c.status || '', format: humanize, order: ['pending', 'in_progress', 'support_required', 'completed'] },
-  { key: 'completed', label: 'Completed', value: (c) => (c.completed_at ? formatBusinessDate(c.completed_at) : '') },
+  { key: 'code', label: 'Code', value: (c) => c.code || '', width: 130, minWidth: 110, cellClassName: 'font-mono text-xs text-grey-500 whitespace-nowrap' },
+  { key: 'date', label: 'Date', value: (c) => c.scrum_date || '', width: 110, cellClassName: 'text-grey-500 whitespace-nowrap' },
+  { key: 'employee', label: 'Employee', value: (c) => c.full_name || '', width: 140, cellClassName: 'font-semibold text-grey-800 whitespace-nowrap' },
+  { key: 'task', label: 'Task', value: (c) => c.description || '', width: 260, cellClassName: 'text-grey-800' },
+  { key: 'type', label: 'Type', value: (c) => c.type || '', format: humanize, width: 110, render: (c) => <Badge tone={c.type}>{c.type}</Badge> },
+  { key: 'process', label: 'Process', value: (c) => c.main_task_name || '', width: 160, cellClassName: 'text-grey-600 whitespace-nowrap' },
+  { key: 'activity', label: 'Activity', value: (c) => c.task_activity_name || '', width: 160, cellClassName: 'text-grey-600 whitespace-nowrap' },
+  { key: 'reviewer', label: 'Reviewer', value: (c) => c.reviewer_name || '', width: 130, cellClassName: 'text-grey-600 whitespace-nowrap' },
+  {
+    key: 'status', label: 'Status', width: 140, order: ['pending', 'in_progress', 'support_required', 'completed'],
+    value: (c) => c.status || '', format: humanize, render: (c) => <Badge tone={c.status}>{humanize(c.status)}</Badge>,
+  },
+  { key: 'completed', label: 'Completed', value: (c) => (c.completed_at ? formatBusinessDate(c.completed_at) : ''), width: 110, cellClassName: 'text-grey-500 whitespace-nowrap' },
+  {
+    key: 'notes', label: 'Notes', width: 240, sortable: false, filterable: false, cellClassName: 'max-w-[240px]',
+    value: (c) => c.non_completion_reason || c.remarks || '',
+    render: (c) => (
+      <>
+        <div className="flex flex-wrap gap-1 mb-1">
+          {!!c.is_leader_support_task && <Badge tone="pending">Support Task</Badge>}
+          {!c.is_leader_support_task && !!(c.carried_forward_to_id || c.had_support_request) && <Badge tone="pending">Escalated to Leader</Badge>}
+        </div>
+        {c.non_completion_reason || c.remarks ? (
+          <span className="text-grey-600 text-xs">
+            {c.non_completion_reason && <strong>{c.non_completion_reason}</strong>}
+            {c.non_completion_reason && c.remarks && ' — '}
+            {c.remarks}
+          </span>
+        ) : (!c.is_leader_support_task && !c.carried_forward_to_id && !c.had_support_request && <span className="text-grey-300">—</span>)}
+      </>
+    ),
+  },
 ];
 
 /** Splits CSV text into raw records without re-serializing any cell, so a kept row stays byte-identical to
@@ -80,8 +103,9 @@ export default function History() {
   const [employeeOptions, setEmployeeOptions] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [commitmentsTruncated, setCommitmentsTruncated] = useState(false);
-  const recordFilters = useColumnFilters(commitments || NO_ROWS, RECORD_COLUMNS, { staleLabel: 'not in these records' });
-  const shownRecords = recordFilters.filtered;
+  const table = useDataTable(commitments ?? NO_ROWS, RECORD_COLUMNS, {
+    tableId: 'history-task-records', staleLabel: 'not in these records', loading: commitments === null,
+  });
 
   function query(f = filters) {
     setLoadError('');
@@ -104,7 +128,7 @@ export default function History() {
 
   function clearFilters() {
     setFilters(EMPTY_FILTERS);
-    recordFilters.clearAll();
+    table.clearFilters();
     query(EMPTY_FILTERS);
   }
 
@@ -121,12 +145,13 @@ export default function History() {
         // this check the JSON error body would get downloaded and named scrum-history.csv as if it had
         // succeeded, instead of surfacing the actual error.
         if (!res.ok) throw new Error(`Export failed (${res.status}).`);
-        if (!recordFilters.anyActive) return res.blob();
-        // Column filters are applied in the browser, so keep the server's own file (same columns, same
-        // formula-injection escaping) and drop just the records the table isn't showing, matched on Code.
+        if (!table.anyFilterActive) return res.blob();
+        // Column filters and the search box are applied in the browser, so keep the server's own file
+        // (same columns, same formula-injection escaping) and drop just the records the table isn't
+        // showing, matched on Code.
         return res.text().then((text) => {
           const [header, ...rows] = csvRecords(text);
-          const shown = new Set(shownRecords.map((c) => c.code));
+          const shown = new Set(table.rows.map((c) => c.code));
           const kept = rows.filter((r) => shown.has(r.match(/^"([^"]*)"/)?.[1]));
           return new Blob([[header, ...kept].join('\n')], { type: 'text/csv' });
         });
@@ -282,92 +307,24 @@ export default function History() {
           </Card>
 
           <Card className="animate-fade-in-up" style={{ animationDelay: '160ms' }}>
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-3">
               <ClipboardList className="w-4 h-4 text-brand-600" />
               <h2 className="font-semibold text-grey-900">Task Records</h2>
             </div>
-            {commitments === null ? (
-              <div className="space-y-2">
-                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
-              </div>
-            ) : commitments.length === 0 ? (
-              <EmptyState icon={<IllustrationEmptyList className="w-16 h-16 mx-auto" />} title="Nothing here yet">No records match this filter — try widening the date range.</EmptyState>
-            ) : (
-              <>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
-                <span className="text-xs text-grey-400">{shownRecords.length} of {commitments.length} record{commitments.length === 1 ? '' : 's'}</span>
-                <span className="text-xs text-grey-400">Click a column's <Filter className="inline w-3 h-3 -mt-0.5" /> icon to filter these records.</span>
-                {recordFilters.anyActive && (
-                  <button onClick={recordFilters.clearAll} className="inline-flex items-center gap-1 text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors">
-                    <XCircle className="w-3.5 h-3.5" /> Clear column filters
-                  </button>
-                )}
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-grey-500 border-b border-grey-100 text-[11px] uppercase tracking-wide">
-                      {RECORD_COLUMNS.map((col) => (
-                        <th key={col.key} className="py-2 pr-3 font-semibold whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1">
-                            {col.label}
-                            <FilterFunnel
-                              label={col.label}
-                              active={recordFilters.isFiltered(col.key)}
-                              open={recordFilters.isOpen(col.key)}
-                              onToggle={(el) => recordFilters.toggleFilter(col.key, el)}
-                            />
-                          </span>
-                        </th>
-                      ))}
-                      <th className="py-2 pr-3 font-semibold">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {shownRecords.map((c, i) => (
-                      <tr key={c.id} className="border-b border-grey-50 last:border-0 hover:bg-grey-50 transition-colors align-top animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                        <td className="py-2 pr-3 whitespace-nowrap font-mono text-xs text-grey-500">{c.code}</td>
-                        <td className="pr-3 whitespace-nowrap text-grey-500">{c.scrum_date}</td>
-                        <td className="pr-3 font-semibold text-grey-800 whitespace-nowrap">{c.full_name}</td>
-                        <td className="pr-3 text-grey-800">{c.description}</td>
-                        <td className="pr-3"><Badge tone={c.type}>{c.type}</Badge></td>
-                        <td className="pr-3 whitespace-nowrap text-grey-600">{c.main_task_name || <span className="text-grey-300">—</span>}</td>
-                        <td className="pr-3 whitespace-nowrap text-grey-600">{c.task_activity_name || <span className="text-grey-300">—</span>}</td>
-                        <td className="pr-3 whitespace-nowrap text-grey-600">{c.reviewer_name || <span className="text-grey-300">—</span>}</td>
-                        <td className="pr-3"><Badge tone={c.status}>{humanize(c.status)}</Badge></td>
-                        <td className="pr-3 whitespace-nowrap text-grey-500">{c.completed_at ? formatBusinessDate(c.completed_at) : <span className="text-grey-300">—</span>}</td>
-                        <td className="pr-3 max-w-[220px]">
-                          <div className="flex flex-wrap gap-1 mb-1">
-                            {!!c.is_leader_support_task && <Badge tone="pending">Support Task</Badge>}
-                            {!c.is_leader_support_task && !!(c.carried_forward_to_id || c.had_support_request) && <Badge tone="pending">Escalated to Leader</Badge>}
-                          </div>
-                          {c.non_completion_reason || c.remarks ? (
-                            <span className="text-grey-600 text-xs">
-                              {c.non_completion_reason && <strong>{c.non_completion_reason}</strong>}
-                              {c.non_completion_reason && c.remarks && ' — '}
-                              {c.remarks}
-                            </span>
-                          ) : (!c.is_leader_support_task && !c.carried_forward_to_id && !c.had_support_request && <span className="text-grey-300">—</span>)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {/* Outside the horizontal scroller, so it stays on screen even when the table is scrolled sideways. */}
-              {shownRecords.length === 0 && (
-                <EmptyState icon={<IllustrationSearch className="w-16 h-16 mx-auto" />} title="No records match these column filters">
-                  Adjust a column filter, or use "Clear column filters" above.
-                </EmptyState>
-              )}
-              {commitmentsTruncated && (
-                <p className="text-xs text-grey-400 mt-2">
-                  Showing the first {commitments.length} matching records{recordFilters.anyActive ? ', and column filters only search these' : ''} — narrow the date range or filters above to see the rest.
-                </p>
-              )}
-              </>
+            <DataTableView
+              table={table}
+              getRowId={(c) => c.id}
+              searchPlaceholder="Search records…"
+              emptyTitle="Nothing here yet"
+              emptyBody="No records match this filter — try widening the date range."
+              noMatchTitle="No records match these column filters"
+              noMatchBody='Adjust a column filter or your search, or use "Clear filters" above.'
+            />
+            {commitmentsTruncated && (
+              <p className="text-xs text-grey-400 mt-2">
+                Showing the first {commitments.length} matching records{table.anyFilterActive ? ', and the table above only searches these' : ''} — narrow the date range or filters above to see the rest.
+              </p>
             )}
-            {recordFilters.popoverProps && <ColumnFilterPopover key={recordFilters.popoverProps.column.key} {...recordFilters.popoverProps} />}
           </Card>
         </>
       )}
