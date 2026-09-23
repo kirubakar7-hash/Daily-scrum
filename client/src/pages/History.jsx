@@ -12,6 +12,8 @@ import {
   ClipboardList,
   ListChecks,
   Search,
+  Download,
+  Check,
 } from 'lucide-react';
 
 const EMPTY_FILTERS = { date_from: '', date_to: '', type: '', status: '', main_task_id: '', task_activity_id: '', employee_id: '', team_id: '', priority: '' };
@@ -72,6 +74,21 @@ const SUMMARY_COLUMNS = [
   { key: 'adhoc', label: 'Ad-hoc', width: 110, value: (s) => s.adhoc_activities ?? 0, cellClassName: 'text-grey-600' },
 ];
 
+/** Splits CSV text into raw records without re-serializing any cell, so a kept row stays byte-identical to
+ *  what the server sent. A description can hold a newline inside its quotes, so a plain split('\n') would
+ *  break a record in two; an escaped "" toggles twice, which leaves the quote state unchanged. */
+function csvRecords(text) {
+  const records = [];
+  let start = 0;
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '"') inQuotes = !inQuotes;
+    else if (text[i] === '\n' && !inQuotes) { records.push(text.slice(start, i)); start = i + 1; }
+  }
+  if (start < text.length) records.push(text.slice(start));
+  return records;
+}
+
 /** Reads whichever of EMPTY_FILTERS' keys are present in the URL — this is what makes a Dashboard KPI's
  *  "?status=support_required"-style drill-down link actually land pre-filtered instead of on a blank page. */
 function filtersFromSearchParams(searchParams) {
@@ -91,6 +108,8 @@ export default function History() {
   const [commitments, setCommitments] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [commitmentsTruncated, setCommitmentsTruncated] = useState(false);
+  const [exported, setExported] = useState(false);
+  const [exportError, setExportError] = useState('');
   const table = useDataTable(commitments ?? NO_ROWS, RECORD_COLUMNS, {
     tableId: 'history-task-records', staleLabel: 'not in these records', loading: commitments === null,
   });
@@ -107,6 +126,41 @@ export default function History() {
     query(filtersFromSearchParams(searchParams));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The server's own export (same columns, same formula-injection escaping, not capped at the 500 rows the
+  // table loads). When the table's search or column filters are narrowing it, keep just the records on
+  // screen, matched on Code, so the download matches what the user sees.
+  function exportCsv() {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([k, v]) => v && params.set(k, v));
+    const token = localStorage.getItem('dsm_token');
+    setExportError('');
+    fetch(`/api/history/export.csv?${params}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => {
+        // fetch() only rejects on a network-level failure — a 401/500 still resolves here, and without
+        // this check the JSON error body would get downloaded and named scrum-history.csv as if it had
+        // succeeded, instead of surfacing the actual error.
+        if (!res.ok) throw new Error(`Export failed (${res.status}).`);
+        if (!table.anyFilterActive) return res.blob();
+        return res.text().then((text) => {
+          const [header, ...rows] = csvRecords(text);
+          const shown = new Set(table.rows.map((c) => c.code));
+          const kept = rows.filter((r) => shown.has(r.match(/^"([^"]*)"/)?.[1]));
+          return new Blob([[header, ...kept].join('\n')], { type: 'text/csv' });
+        });
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'scrum-history.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+        setExported(true);
+        setTimeout(() => setExported(false), 2000);
+      })
+      .catch((e) => setExportError(e.message || "Couldn't export History."));
+  }
 
   return (
     <div className="space-y-5">
@@ -173,6 +227,19 @@ export default function History() {
             </div>
             <DataTableView
               table={table}
+              toolbarExtra={(
+                <span className="inline-flex items-center gap-2">
+                  {exportError && <span className="text-xs text-accent-600">{exportError}</span>}
+                  {exported && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 animate-scale-in">
+                      <Check className="w-3.5 h-3.5" /> Downloaded
+                    </span>
+                  )}
+                  <button onClick={exportCsv} className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-800 transition-colors press-scale">
+                    <Download className="w-3.5 h-3.5" /> Export to CSV
+                  </button>
+                </span>
+              )}
               getRowId={(c) => c.id}
               searchPlaceholder="Search records…"
               emptyTitle="Nothing here yet"
