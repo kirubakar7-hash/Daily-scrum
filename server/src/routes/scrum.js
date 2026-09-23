@@ -5,7 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { recordAudit, auditDiff } from '../lib/audit.js';
 import { canViewEmployee, canActOnEmployee, isReadOnly } from '../lib/scope.js';
 import { withDelay, withLateness } from '../lib/delay.js';
-import { nextOccurrence, describeRule, validateRule, legacyFrequencyToRule } from '../lib/recurrence.js';
+import { firstDueDate, nextOccurrence, describeRule, validateRule, legacyFrequencyToRule } from '../lib/recurrence.js';
 import { insertOccurrence } from '../lib/recurringOccurrences.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { resolveDefaultCategoryId } from '../lib/masterData.js';
@@ -184,6 +184,7 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   }
 
   let recurringActivityId = b.recurring_activity_id || null;
+  let seriesFirstDue = null;
   if (type === 'recurring' && !recurringActivityId) {
     const existing = await db.prepare('SELECT id FROM recurring_activities WHERE employee_id = ? AND lower(title) = lower(?)').get(employeeId, b.description.trim());
     if (existing) {
@@ -193,6 +194,9 @@ router.post('/commitments', asyncHandler(async (req, res) => {
     } else {
       recurringActivityId = uuid();
       const seriesStart = b.due_date || b.scrum_date || today();
+      // Same as Admin's Recurring Tasks form: the first task lands on the pattern (e.g. the next Monday, or
+      // the 15th), not on whatever date happened to be in the Due field.
+      seriesFirstDue = firstDueDate(seriesStart, rule);
       await db.prepare(`
         INSERT INTO recurring_activities (id, employee_id, title, frequency, recurrence_rule, series_start_date, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority, created_by)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -202,7 +206,7 @@ router.post('/commitments', asyncHandler(async (req, res) => {
 
   const id = uuid();
   const date = b.scrum_date || today();
-  const dueDate = b.due_date || date;
+  const dueDate = seriesFirstDue || b.due_date || date;
   await db.prepare(`
     INSERT INTO commitments (
       id, employee_id, scrum_date, description, type, recurring_activity_id, task_type_id, category_id, main_task_id, task_activity_id, reviewer_id, priority, expected_outcome,

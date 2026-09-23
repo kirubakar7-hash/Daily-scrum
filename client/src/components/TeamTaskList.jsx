@@ -721,7 +721,7 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
           {reviewers.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
         </Select>
       </div>
-      {isRecurring && <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} />}
+      {isRecurring && <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={dueDate} />}
       <ErrorBanner message={loadError} />
       <ErrorBanner message={error} />
       <Button variant="secondary" onClick={create} disabled={saving}>{saving ? 'Creating…' : <><Plus className="w-4 h-4" /> Create Task</>}</Button>

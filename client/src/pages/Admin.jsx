@@ -1157,7 +1157,7 @@ function RecurringTasksTab() {
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Build a Recurring Task" wide>
         <p className="text-xs text-grey-400 mb-3">
           Create it once here and assign it to everyone who needs it — like a shared to-do list template. Each person gets their own copy,
-          and a fresh one lines up automatically on the right day once they mark theirs done.
+          and a fresh one appears automatically on every scheduled day — whether or not the previous one is done yet.
         </p>
         <div className="grid sm:grid-cols-2 gap-3 mb-3">
           <Select label="Process" value={mainTaskId} onChange={(e) => setMainTaskId(e.target.value)}>
@@ -1184,7 +1184,7 @@ function RecurringTasksTab() {
         </div>
         <div className="mb-3">
           <span className="block text-sm font-medium text-grey-700 mb-1.5">How often?</span>
-          <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} />
+          <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={startDate} />
         </div>
         <div className="mb-3">
           <span className="block text-sm font-medium text-grey-700 mb-1.5">Assign to</span>

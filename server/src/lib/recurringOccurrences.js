@@ -1,5 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import { db, today } from '../db.js';
+import { getBusinessDate } from './businessDate.js';
 import { firstDueDate, nextOccurrence, parseRule } from './recurrence.js';
 import { recordAudit } from './audit.js';
 
@@ -84,9 +85,10 @@ function latestDueOccurrence(fromDate, activity, asOf) {
  *  scans every active series and, for any whose last-known occurrence has fallen behind the recurrence
  *  rule, materializes the one current occurrence it's now due for — independent of whether the previous
  *  occurrence was ever completed. A series with nothing overdue (already caught up, or pre-generated
- *  ahead by the completion path) is left alone, so running this twice in one day is a no-op the second time. */
-export async function generateDueOccurrences() {
-  const date = today();
+ *  ahead by the completion path) is left alone, so running this twice in one day is a no-op the second time.
+ *  `now` (an instant) is for tests only — the cron route passes nothing, so it's always the real IST business date. */
+export async function generateDueOccurrences({ now } = {}) {
+  const date = now ? getBusinessDate(now) : today();
   const log = (msg) => console.log(`[Recurring Scheduler] ${msg}`);
   log(`Started — business date ${date}`);
   const activities = await db.prepare('SELECT * FROM recurring_activities WHERE is_active = 1').all();

@@ -136,3 +136,155 @@ test('describeRule — produces a readable label for weekday and plain-interval 
   assert.equal(describeRule({ interval: 2, unit: 'month', end: { type: 'never' } }), 'Every 2 months');
   assert.equal(describeRule({ interval: 1, unit: 'day', end: { type: 'after_count', count: 5 } }), 'Every day, 5×');
 });
+
+// ---- Named frequencies (Daily / Weekly / Business Week / Monthly / Quarterly / Half-Yearly / Yearly) ----
+// 2026-09-21 Mon, 09-23 Wed, 09-25 Fri, 09-26 Sat, 09-27 Sun, 09-28 Mon.
+const seriesOf = (rule, start) => ({ recurrence_rule: JSON.stringify({ end: { type: 'never' }, ...rule }), series_start_date: start, occurrences_created: 1 });
+const chain = (activity, from, n) => {
+  const out = [from];
+  for (let i = 0; i < n; i++) out.push(nextOccurrence(out[out.length - 1], activity));
+  return out;
+};
+
+test('Daily — 23 Sep → 24 Sep → 25 Sep → 26 Sep, and across month and year ends', () => {
+  const a = seriesOf({ interval: 1, unit: 'day' }, '2026-09-23');
+  assert.deepEqual(chain(a, '2026-09-23', 3), ['2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26']);
+  assert.equal(nextOccurrence('2026-09-30', a), '2026-10-01');
+  assert.equal(nextOccurrence('2026-12-31', a), '2027-01-01');
+  assert.equal(nextOccurrence('2028-02-28', a), '2028-02-29', 'leap day');
+});
+
+test('Weekly — keeps the chosen weekday: Monday → next Monday, Friday → next Friday', () => {
+  const monday = seriesOf({ interval: 1, unit: 'week', weekdays: [1] }, '2026-09-23');
+  assert.equal(firstDueDate('2026-09-23', { unit: 'week', weekdays: [1] }), '2026-09-28', 'started on a Wednesday, first one is the next Monday');
+  assert.deepEqual(chain(monday, '2026-09-28', 2), ['2026-09-28', '2026-10-05', '2026-10-12']);
+  const friday = seriesOf({ interval: 1, unit: 'week', weekdays: [5] }, '2026-09-23');
+  assert.equal(firstDueDate('2026-09-23', { unit: 'week', weekdays: [5] }), '2026-09-25');
+  assert.deepEqual(chain(friday, '2026-09-25', 2), ['2026-09-25', '2026-10-02', '2026-10-09']);
+  assert.equal(nextOccurrence('2026-12-28', monday), '2027-01-04', 'across a year end');
+});
+
+test('Business Week — Friday → Monday, Monday → Tuesday, Thursday → Friday, never a weekend', () => {
+  const rule = { interval: 1, unit: 'week', weekdays: [1, 2, 3, 4, 5] };
+  const a = seriesOf(rule, '2026-09-21');
+  assert.equal(nextOccurrence('2026-09-25', a), '2026-09-28', 'Friday → Monday');
+  assert.equal(nextOccurrence('2026-09-21', a), '2026-09-22', 'Monday → Tuesday');
+  assert.equal(nextOccurrence('2026-09-24', a), '2026-09-25', 'Thursday → Friday');
+  assert.equal(firstDueDate('2026-09-26', rule), '2026-09-28', 'a series started on a Saturday begins Monday');
+  const dates = chain(a, '2026-09-21', 300); // well over a year, through month and year ends
+  const weekend = dates.filter((d) => [0, 6].includes(new Date(`${d}T00:00:00Z`).getUTCDay()));
+  assert.deepEqual(weekend, [], 'no Saturday or Sunday, ever');
+  assert.equal(new Set(dates).size, dates.length, 'no date twice');
+});
+
+test('Monthly — 15 Sep → 15 Oct → 15 Nov; 1st of every month', () => {
+  const a = seriesOf({ interval: 1, unit: 'month', day_of_month: 15 }, '2026-09-15');
+  assert.deepEqual(chain(a, '2026-09-15', 4), ['2026-09-15', '2026-10-15', '2026-11-15', '2026-12-15', '2027-01-15']);
+  const first = seriesOf({ interval: 1, unit: 'month', day_of_month: 1 }, '2026-09-01');
+  assert.deepEqual(chain(first, '2026-09-01', 2), ['2026-09-01', '2026-10-01', '2026-11-01']);
+  assert.equal(firstDueDate('2026-09-23', { unit: 'month', day_of_month: 15 }), '2026-10-15', 'the 15th has passed this month, so next month');
+  assert.equal(firstDueDate('2026-09-10', { unit: 'month', day_of_month: 15 }), '2026-09-15');
+});
+
+test('Monthly on the 31st — a short month uses its last day, and the next month goes back to the 31st', () => {
+  const a = seriesOf({ interval: 1, unit: 'month', day_of_month: 31 }, '2027-01-31');
+  assert.equal(nextOccurrence('2027-01-31', a), '2027-02-28', '31 Jan → February');
+  assert.equal(nextOccurrence('2027-03-31', a), '2027-04-30', '31 Mar → April');
+  assert.equal(nextOccurrence('2027-05-31', a), '2027-06-30', '31 May → June');
+  assert.equal(nextOccurrence('2027-08-31', a), '2027-09-30', '31 Aug → September');
+  assert.equal(nextOccurrence('2027-10-31', a), '2027-11-30', '31 Oct → November');
+  assert.equal(nextOccurrence('2027-02-28', a), '2027-03-31', 'no drift: after February it is the 31st again, not the 28th');
+  assert.equal(nextOccurrence('2028-01-31', a), '2028-02-29', 'leap year February');
+});
+
+test('Monthly — a rule saved before day_of_month existed keeps its start day instead of drifting', () => {
+  // Existing monthly series (no day_of_month) anchor on their own start day — previously 31 Jan → 28 Feb
+  // → 28 Mar forever; now it recovers to 31 Mar.
+  const a = seriesOf({ interval: 1, unit: 'month' }, '2027-01-31');
+  assert.deepEqual(chain(a, '2027-01-31', 3), ['2027-01-31', '2027-02-28', '2027-03-31', '2027-04-30']);
+});
+
+test('Monthly on the last day — 31 Jan → 28 Feb → 31 Mar → 30 Apr, and 29 Feb in a leap year', () => {
+  const rule = { interval: 1, unit: 'month', last_day: true };
+  const a = seriesOf(rule, '2027-01-31');
+  assert.deepEqual(chain(a, '2027-01-31', 3), ['2027-01-31', '2027-02-28', '2027-03-31', '2027-04-30']);
+  assert.equal(nextOccurrence('2028-01-31', a), '2028-02-29');
+  assert.equal(firstDueDate('2026-09-23', rule), '2026-09-30');
+});
+
+test('Quarterly — 1 Jan → 1 Apr → 1 Jul → 1 Oct → 1 Jan; 15 Feb → 15 May → 15 Aug → 15 Nov', () => {
+  const a = seriesOf({ interval: 3, unit: 'month', day_of_month: 1 }, '2027-01-01');
+  assert.deepEqual(chain(a, '2027-01-01', 4), ['2027-01-01', '2027-04-01', '2027-07-01', '2027-10-01', '2028-01-01']);
+  const b = seriesOf({ interval: 3, unit: 'month', day_of_month: 15 }, '2027-02-15');
+  assert.deepEqual(chain(b, '2027-02-15', 3), ['2027-02-15', '2027-05-15', '2027-08-15', '2027-11-15']);
+  const c = seriesOf({ interval: 3, unit: 'month', day_of_month: 31 }, '2027-01-31');
+  assert.deepEqual(chain(c, '2027-01-31', 4), ['2027-01-31', '2027-04-30', '2027-07-31', '2027-10-31', '2028-01-31'], 'short months follow the Monthly rule, then recover');
+  assert.equal(firstDueDate('2026-09-23', { unit: 'month', interval: 3, day_of_month: 1 }), '2026-10-01');
+});
+
+test('Half-Yearly — 1 Jan → 1 Jul → 1 Jan; 15 Mar → 15 Sep → 15 Mar', () => {
+  const a = seriesOf({ interval: 6, unit: 'month', day_of_month: 1 }, '2027-01-01');
+  assert.deepEqual(chain(a, '2027-01-01', 2), ['2027-01-01', '2027-07-01', '2028-01-01']);
+  const b = seriesOf({ interval: 6, unit: 'month', day_of_month: 15 }, '2027-03-15');
+  assert.deepEqual(chain(b, '2027-03-15', 2), ['2027-03-15', '2027-09-15', '2028-03-15']);
+  const c = seriesOf({ interval: 6, unit: 'month', day_of_month: 31 }, '2027-08-31');
+  assert.deepEqual(chain(c, '2027-08-31', 2), ['2027-08-31', '2028-02-29', '2028-08-31']);
+});
+
+test('Yearly — 1 Jan 2027 → 1 Jan 2028; 15 Sep → 15 Sep; 29 Feb falls on 28 Feb in non-leap years', () => {
+  const jan = { interval: 12, unit: 'month', month: 1, day_of_month: 1 };
+  assert.equal(firstDueDate('2026-09-23', jan), '2027-01-01');
+  assert.deepEqual(chain(seriesOf(jan, '2027-01-01'), '2027-01-01', 1), ['2027-01-01', '2028-01-01']);
+  const sep = { interval: 12, unit: 'month', month: 9, day_of_month: 15 };
+  assert.equal(firstDueDate('2026-09-10', sep), '2026-09-15');
+  assert.equal(firstDueDate('2026-09-23', sep), '2027-09-15', 'this year\'s date has passed');
+  assert.equal(nextOccurrence('2026-09-15', seriesOf(sep, '2026-09-15')), '2027-09-15');
+  const leap = { interval: 12, unit: 'month', month: 2, day_of_month: 29 };
+  assert.equal(firstDueDate('2026-09-23', leap), '2027-02-28');
+  assert.deepEqual(chain(seriesOf(leap, '2028-02-29'), '2028-02-29', 4), ['2028-02-29', '2029-02-28', '2030-02-28', '2031-02-28', '2032-02-29']);
+  const febLast = { interval: 12, unit: 'month', month: 2, last_day: true };
+  assert.deepEqual(chain(seriesOf(febLast, '2027-02-28'), '2027-02-28', 1), ['2027-02-28', '2028-02-29']);
+});
+
+test('validateRule — the new day/month fields reject impossible or contradictory choices', () => {
+  assert.ok(validateRule({ interval: 1, unit: 'month', day_of_month: 32 }));
+  assert.ok(validateRule({ interval: 1, unit: 'month', day_of_month: 0 }));
+  assert.ok(validateRule({ interval: 1, unit: 'day', day_of_month: 5 }), 'day of month on a daily rule');
+  assert.ok(validateRule({ interval: 1, unit: 'month', day_of_month: 5, last_day: true }), 'both a day and last day');
+  assert.ok(validateRule({ interval: 1, unit: 'month', month: 3, day_of_month: 5 }), 'a month on a monthly rule');
+  assert.ok(validateRule({ interval: 12, unit: 'month', month: 13, day_of_month: 1 }));
+  assert.ok(validateRule({ interval: 12, unit: 'month', month: 4, day_of_month: 31 }), '31 April does not exist');
+  assert.ok(validateRule({ interval: 12, unit: 'month', month: 2, day_of_month: 30 }));
+  assert.ok(validateRule({ interval: 12, unit: 'month', month: 6 }), 'yearly needs a day');
+  for (const ok of [
+    { interval: 1, unit: 'day' },
+    { interval: 1, unit: 'week', weekdays: [1] },
+    { interval: 1, unit: 'week', weekdays: [1, 2, 3, 4, 5] },
+    { interval: 1, unit: 'month', day_of_month: 31 },
+    { interval: 1, unit: 'month', last_day: true },
+    { interval: 3, unit: 'month', day_of_month: 1 },
+    { interval: 6, unit: 'month', day_of_month: 15 },
+    { interval: 12, unit: 'month', month: 2, day_of_month: 29 },
+    { interval: 12, unit: 'month', month: 12, last_day: true },
+  ]) assert.equal(validateRule(ok), null, JSON.stringify(ok));
+});
+
+test('describeRule — a plain label for each named frequency', () => {
+  const d = (r) => describeRule({ end: { type: 'never' }, ...r });
+  assert.equal(d({ interval: 1, unit: 'day' }), 'Every day');
+  assert.equal(d({ interval: 1, unit: 'week', weekdays: [5] }), 'Weekly on Fri');
+  assert.equal(d({ interval: 1, unit: 'week', weekdays: [1, 2, 3, 4, 5] }), 'Every business day (Mon–Fri)');
+  assert.equal(d({ interval: 1, unit: 'month', day_of_month: 15 }), 'Monthly on day 15');
+  assert.equal(d({ interval: 1, unit: 'month', last_day: true }), 'Monthly on the last day');
+  assert.equal(d({ interval: 3, unit: 'month', day_of_month: 1 }), 'Quarterly on day 1');
+  assert.equal(d({ interval: 6, unit: 'month', day_of_month: 15 }), 'Half-yearly on day 15');
+  assert.equal(d({ interval: 12, unit: 'month', month: 9, day_of_month: 15 }), 'Yearly on 15 Sep');
+  assert.equal(d({ interval: 12, unit: 'month', month: 2, last_day: true }), 'Yearly on the last day of Feb');
+});
+
+test('legacyFrequencyToRule — the CSV import accepts the new frequency names', () => {
+  assert.deepEqual(legacyFrequencyToRule('Business Week').weekdays, [1, 2, 3, 4, 5]);
+  assert.equal(legacyFrequencyToRule('Quarterly').interval, 3);
+  assert.equal(legacyFrequencyToRule('Half-Yearly').interval, 6);
+  assert.equal(legacyFrequencyToRule('Yearly').interval, 12);
+});

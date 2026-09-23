@@ -1376,6 +1376,55 @@ test('recurring generation — a scheduler-created task shows up in My Tasks, Te
   assert.ok(histIds.includes(fresh.id) && histIds.includes(overdueId), 'History must list both occurrences');
 });
 
+test('recurring API — each named frequency is stored as its rule, labelled plainly, and its first task lands on the chosen day', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const base = { employee_ids: [ids.reportAId], category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId, start_date: '2026-09-23' };
+  const cases = [
+    ['Freq Daily', { interval: 1, unit: 'day' }, 'Every day', '2026-09-23'],
+    ['Freq Weekly', { interval: 1, unit: 'week', weekdays: [1] }, 'Weekly on Mon', '2026-09-28'],
+    ['Freq Business', { interval: 1, unit: 'week', weekdays: [1, 2, 3, 4, 5] }, 'Every business day (Mon–Fri)', '2026-09-23'],
+    ['Freq Monthly', { interval: 1, unit: 'month', day_of_month: 15 }, 'Monthly on day 15', '2026-10-15'],
+    ['Freq Month end', { interval: 1, unit: 'month', last_day: true }, 'Monthly on the last day', '2026-09-30'],
+    ['Freq Quarterly', { interval: 3, unit: 'month', day_of_month: 1 }, 'Quarterly on day 1', '2026-10-01'],
+    ['Freq Half', { interval: 6, unit: 'month', day_of_month: 15 }, 'Half-yearly on day 15', '2026-10-15'],
+    ['Freq Yearly', { interval: 12, unit: 'month', month: 1, day_of_month: 1 }, 'Yearly on 1 Jan', '2027-01-01'],
+  ];
+  for (const [title, rule, label, firstDue] of cases) {
+    const res = await fetch(`${baseUrl}/api/recurring-tasks`, {
+      method: 'POST', headers: authed(adminLogin.token),
+      body: JSON.stringify({ ...base, title, recurrence_rule: { ...rule, end: { type: 'never' } } }),
+    });
+    assert.equal(res.status, 201, title);
+    const [series] = (await res.json()).recurring_tasks;
+    assert.equal(series.frequency, label, title);
+    assert.deepEqual(JSON.parse(series.recurrence_rule), { ...rule, end: { type: 'never' } }, `${title}: the rule is stored in the database as sent`);
+    const seedTask = await db.prepare('SELECT due_date FROM commitments WHERE recurring_activity_id = ?').get(series.id);
+    assert.equal(seedTask.due_date, firstDue, title);
+  }
+
+  const bad = await fetch(`${baseUrl}/api/recurring-tasks`, {
+    method: 'POST', headers: authed(adminLogin.token),
+    body: JSON.stringify({ ...base, title: 'Freq Bad', recurrence_rule: { interval: 12, unit: 'month', month: 4, day_of_month: 31, end: { type: 'never' } } }),
+  });
+  assert.equal(bad.status, 400, '31 April must be refused, not silently turned into another date');
+  assert.match((await bad.json()).error, /April|Apr/);
+});
+
+test('recurring API — a recurring task made from Team Tasks also starts on its pattern, not on the Due date typed in', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const res = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: authed(adminLogin.token),
+    body: JSON.stringify({
+      description: 'Team Tasks weekly Monday check', type: 'recurring', due_date: '2026-09-23', employee_id: ids.reportAId,
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+      recurrence_rule: { interval: 1, unit: 'week', weekdays: [1], end: { type: 'never' } },
+    }),
+  });
+  assert.equal(res.status, 201);
+  const { commitment } = await res.json();
+  assert.equal(commitment.due_date, '2026-09-28', 'a Wednesday due date becomes the next Monday');
+});
+
 // The completion-triggered path (an employee marking today's occurrence done, via POST .../resolve) is a
 // second way a recurring series advances, alongside the schedule-triggered sweep tested above — it had no
 // integration test at all before this.
