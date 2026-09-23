@@ -147,9 +147,11 @@ export function ColumnFilterPopover({ column, currentValue, options, anchorEl, o
 
   function apply() {
     if (!someVisibleChecked) return;
+    // Every listed value ticked is Excel's unfiltered state — store it as [] so the column isn't flagged as
+    // filtered. Otherwise keep the whole selection, including any ticked value another column's filter is
+    // currently hiding from this list (it's in `checked`, just not shown).
     const values = [...selection];
-    // Every value ticked is Excel's unfiltered state — store it as [] so the column isn't flagged as filtered.
-    closeToAnchor(() => onApply(values.length === options.length ? [] : values));
+    closeToAnchor(() => onApply(options.every((o) => selection.has(o.value)) ? [] : values));
   }
 
   return createPortal(
