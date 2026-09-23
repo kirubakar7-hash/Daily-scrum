@@ -135,7 +135,8 @@ function withSelectedValues(options, selected, key) {
 // Measured against the visual viewport (what's actually on screen, excluding a phone's open keyboard).
 // Opens below the header button, or above when that side has more room; never shorter than
 // POPOVER_MIN_HEIGHT, sliding over the header if it must, so the option list can't collapse to nothing.
-function popoverPosition(anchorEl) {
+// `renderedHeight` (once known) lets that slide stop at the popover's real height, not its maximum.
+function popoverPosition(anchorEl, renderedHeight) {
   const rect = anchorEl.getBoundingClientRect();
   const vv = window.visualViewport;
   const viewTop = vv ? vv.offsetTop : 0;
@@ -149,11 +150,12 @@ function popoverPosition(anchorEl) {
   const above = rect.top - viewTop - 14;
   const openBelow = below >= POPOVER_MIN_HEIGHT || below >= above;
   const maxHeight = Math.min(420, viewHeight - 16, Math.max(openBelow ? below : above, POPOVER_MIN_HEIGHT));
+  const height = renderedHeight ? Math.min(renderedHeight, maxHeight) : maxHeight;
   if (openBelow) {
-    return { top: Math.max(viewTop + 8, Math.min(rect.bottom + 6, viewBottom - 8 - maxHeight)), left, width, maxHeight };
+    return { top: Math.max(viewTop + 8, Math.min(rect.bottom + 6, viewBottom - 8 - height)), left, width, maxHeight };
   }
   const bottom = window.innerHeight - viewBottom + 8;
-  return { bottom: Math.max(bottom, Math.min(window.innerHeight - rect.top + 6, window.innerHeight - viewTop - 8 - maxHeight)), left, width, maxHeight };
+  return { bottom: Math.max(bottom, Math.min(window.innerHeight - rect.top + 6, window.innerHeight - viewTop - 8 - height)), left, width, maxHeight };
 }
 
 /** Excel-style per-column filter menu. Portaled to document.body and fixed-positioned under its header
@@ -210,7 +212,7 @@ function ColumnFilterPopover({ column, currentValue, options, anchorEl, onApply,
     let last = JSON.stringify(popoverPosition(anchorEl));
     function track() {
       if (!anchorEl.isConnected) { onClose(); return; }
-      const next = popoverPosition(anchorEl);
+      const next = popoverPosition(anchorEl, popoverRef.current?.offsetHeight);
       const key = JSON.stringify(next);
       if (key !== last) { last = key; setPos(next); }
       frame = requestAnimationFrame(track);
