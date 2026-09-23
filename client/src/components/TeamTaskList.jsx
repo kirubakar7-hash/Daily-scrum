@@ -1122,7 +1122,7 @@ function TaskDetailDrawer({ task, onChanged, canAct, onClose }) {
         <div>
           <div className="flex items-center gap-2 flex-wrap mb-1.5">
             <Badge tone={task.status}>{task.status}</Badge>
-            {task.priority && <Badge tone={task.priority}>{task.priority} priority</Badge>}
+            {task.priority && <Badge tone={task.priority}>{`${task.priority} priority`}</Badge>}
           </div>
           <h3 className="font-bold text-grey-900 text-lg leading-snug">{task.description}</h3>
         </div>
