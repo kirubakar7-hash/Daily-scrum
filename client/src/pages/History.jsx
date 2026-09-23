@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatBusinessDate } from '../lib/businessDate';
 import { useDataTable } from '../lib/useDataTable';
-import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationSearch, Input, Select, Skeleton, humanize } from '../components/ui';
-import { DataTableView } from '../components/DataTable';
+import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationSearch, Input, Select, humanize } from '../components/ui';
+import DataTable, { DataTableView } from '../components/DataTable';
 import HelpBanner from '../components/HelpBanner';
 import {
   History as HistoryIcon,
@@ -63,6 +63,18 @@ const RECORD_COLUMNS = [
       </>
     ),
   },
+];
+
+// Counts render red when non-zero for the two "needs attention" columns, as before.
+const attention = (key) => (s) => <span className={s[key] > 0 ? 'font-semibold text-accent-600' : 'text-grey-600'}>{s[key]}</span>;
+const SUMMARY_COLUMNS = [
+  { key: 'employee', label: 'Employee', width: 170, value: (s) => s.full_name || '', cellClassName: 'font-semibold text-grey-800 truncate' },
+  { key: 'tasks', label: 'Tasks', width: 100, value: (s) => s.activities ?? 0, cellClassName: 'text-grey-600' },
+  { key: 'completed', label: 'Completed', width: 120, value: (s) => s.completed ?? 0, cellClassName: 'text-grey-600' },
+  { key: 'support', label: 'Support Required', width: 160, value: (s) => s.support_required ?? 0, render: attention('support_required') },
+  { key: 'escalated', label: 'Escalated', width: 120, value: (s) => s.escalated_to_leader ?? 0, render: attention('escalated_to_leader') },
+  { key: 'recurring', label: 'Recurring', width: 120, value: (s) => s.recurring_activities ?? 0, cellClassName: 'text-grey-600' },
+  { key: 'adhoc', label: 'Ad-hoc', width: 110, value: (s) => s.adhoc_activities ?? 0, cellClassName: 'text-grey-600' },
 ];
 
 /** Splits CSV text into raw records without re-serializing any cell, so a kept row stays byte-identical to
@@ -268,42 +280,17 @@ export default function History() {
                 Each row is calculated live from stored records for the period you selected above.{' '}
                 <strong>Escalated</strong> counts tasks that were flagged <Badge tone="support_required">Support Required</Badge> and sent to a Leader's Requests inbox for review.
               </HelpBanner>
-              {summary === null ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
-                </div>
-              ) : summary.length === 0 ? (
-                <EmptyState icon={<IllustrationEmptyList className="w-16 h-16 mx-auto" />} title="Nothing here yet">No records match this filter.</EmptyState>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-grey-500 border-b border-grey-100 text-[11px] uppercase tracking-wide">
-                        <th className="py-2 pr-3 font-semibold">Employee</th><th className="pr-3 font-semibold">Tasks</th>
-                        <th className="pr-3 font-semibold">Completed</th><th className="pr-3 font-semibold">Support Required</th><th className="pr-3 font-semibold">Escalated</th>
-                        <th className="pr-3 font-semibold">Recurring</th><th className="pr-3 font-semibold">Ad-hoc</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {summary.map((s, i) => (
-                        <tr key={s.employee_id} className="border-b border-grey-50 last:border-0 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                          <td className="py-2 pr-3 font-semibold text-grey-800">{s.full_name}</td>
-                          <td className="pr-3 text-grey-600">{s.activities}</td>
-                          <td className="pr-3 text-grey-600">{s.completed}</td>
-                          <td className="pr-3">
-                            <span className={s.support_required > 0 ? 'font-semibold text-accent-600' : 'text-grey-600'}>{s.support_required}</span>
-                          </td>
-                          <td className="pr-3">
-                            <span className={s.escalated_to_leader > 0 ? 'font-semibold text-accent-600' : 'text-grey-600'}>{s.escalated_to_leader}</span>
-                          </td>
-                          <td className="pr-3 text-grey-600">{s.recurring_activities}</td>
-                          <td className="pr-3 text-grey-600">{s.adhoc_activities}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <DataTable
+                data={summary}
+                columns={SUMMARY_COLUMNS}
+                tableId="history-summary"
+                getRowId={(s) => s.employee_id}
+                itemNoun={['employee', 'employees']}
+                searchPlaceholder="Search employees…"
+                loadingRows={4}
+                emptyTitle="Nothing here yet"
+                emptyBody="No records match this filter."
+              />
           </Card>
 
           <Card className="animate-fade-in-up" style={{ animationDelay: '160ms' }}>

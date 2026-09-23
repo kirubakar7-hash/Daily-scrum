@@ -9,6 +9,14 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { Badge, BarList, Button, Card, CardSkeleton, DonutChart, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationSuccess, IllustrationTeam, KpiCard } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
+import DataTable from '../components/DataTable';
+
+// Compact: sits beside a bar chart, so no toolbar — headers still sort and filter.
+const BY_TEAM_COLUMNS = [
+  { key: 'team', label: 'Team', width: 170, value: (t) => t.team_name || '', cellClassName: 'font-semibold text-grey-800 truncate' },
+  { key: 'leader', label: 'Leader', width: 150, value: (t) => t.leader_name || '', cellClassName: 'text-grey-600 truncate' },
+  { key: 'open', label: 'Open Tasks', width: 120, align: 'right', value: (t) => t.open_tasks ?? 0, cellClassName: 'text-grey-700' },
+];
 
 /** Cascading per-row entrance, capped so a long list doesn't stay visibly "still populating" — matches
  *  the same cap Timeline already uses (ui.jsx) for consistency across the app. */
@@ -118,20 +126,7 @@ function OrgDashboard({ data, role }) {
           <EmptyState icon={<IllustrationTeam className="w-16 h-16 mx-auto" />} title="No teams yet">Create a team under Admin to get started.</EmptyState>
         ) : (
           <div className="grid md:grid-cols-2 gap-4">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1">Team</th><th>Leader</th><th className="text-right">Open Tasks</th></tr></thead>
-                <tbody>
-                  {data.by_team.map((t, i) => (
-                    <tr key={t.team_name} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={rowDelay(i)}>
-                      <td className="py-1.5 font-semibold text-grey-800">{t.team_name}</td>
-                      <td className="text-grey-600">{t.leader_name || <span className="text-grey-300">—</span>}</td>
-                      <td className="text-right text-grey-700">{t.open_tasks}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable data={data.by_team} columns={BY_TEAM_COLUMNS} tableId="dashboard-by-team" getRowId={(t) => t.team_name} showToolbar={false} />
             <BarList
               tone="brand"
               items={data.by_team.map((t) => ({ label: t.team_name, value: t.open_tasks }))}

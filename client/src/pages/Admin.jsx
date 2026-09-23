@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Users, UsersRound, Tag, Repeat, Plus, Check, UserPlus, ListTree, ListChecks } from 'lucide-react';
 import { api } from '../lib/api';
 import { getBusinessDate } from '../lib/businessDate';
-import { badgeClassFor, Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationTeam, Input, Modal, Select } from '../components/ui';
+import { badgeClassFor, Badge, Button, Card, CardSkeleton, DeleteButton, EmptyState, ErrorBanner, IllustrationTeam, Input, Modal, Select } from '../components/ui';
 import HelpBanner from '../components/HelpBanner';
+import DataTable, { DataTableView } from '../components/DataTable';
+import { useDataTable } from '../lib/useDataTable';
 import RecurrencePicker, { DEFAULT_RULE } from '../components/RecurrencePicker';
 import ImportButton from '../components/ImportButton';
 import { useAuth } from '../lib/AuthContext';
@@ -20,6 +22,200 @@ const TABS = [
   ['Processes', ListTree],
   ['Activities', ListChecks],
   ['Recurring Tasks', Repeat],
+];
+
+/* ---------------- Admin tables: shared DataTable pieces ----------------
+ * Every Admin list renders through the app's one DataTable. Each column config below is that table's single
+ * source of truth; cells that edit in place get the tab's own save handlers through `ctx` (cellContext). */
+
+const NAME_INPUT = 'w-full font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40';
+const TEXT_INPUT = 'w-full text-grey-500 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40';
+const SMALL_INPUT = 'w-full border border-grey-200 rounded-lg px-1.5 py-1 text-xs text-grey-700 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 disabled:bg-grey-50 disabled:text-grey-400';
+const SMALL_SELECT = 'w-full border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500';
+const LINK_BUTTON = 'text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors';
+
+/** An inline-edit text cell: saves on blur when changed; `required` restores the old value if cleared. */
+function InlineText({ value, onSave, required, placeholder, className, saved, type = 'text', disabled }) {
+  return (
+    <>
+      <input
+        type={type}
+        defaultValue={value || ''}
+        placeholder={placeholder}
+        disabled={disabled}
+        onBlur={(e) => {
+          const v = e.target.value;
+          if (required && !v.trim()) { e.target.value = value || ''; return; }
+          if (v !== (value || '')) onSave(v);
+        }}
+        className={className}
+      />
+      {saved && (
+        <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
+          <Check className="w-3 h-3" /> Saved
+        </div>
+      )}
+    </>
+  );
+}
+
+function statusColumn(activeLabel = 'Active', inactiveLabel = 'Inactive') {
+  return {
+    key: 'status', label: 'Status', width: 110,
+    value: (r) => (r.is_active ? activeLabel : inactiveLabel),
+    render: (r) => <Badge tone={r.is_active ? 'completed' : 'support_required'}>{r.is_active ? activeLabel : inactiveLabel}</Badge>,
+  };
+}
+
+/** The Activate/Deactivate (or Pause/Resume) link plus Delete that ends most Admin rows. */
+function RowControls({ toggleLabel, onToggle, confirmLabel, onDelete, canDelete = true, children }) {
+  return (
+    <div className="flex items-center gap-3 whitespace-nowrap">
+      {onToggle && <button type="button" className={LINK_BUTTON} onClick={onToggle}>{toggleLabel}</button>}
+      {children}
+      {onDelete && <DeleteButton confirmLabel={confirmLabel} disabled={!canDelete} onConfirm={onDelete} />}
+    </div>
+  );
+}
+
+const nameEditColumn = (label, saveName) => ({
+  key: 'name', label, width: 220, value: (r) => r.name || '',
+  render: (r, ctx) => <InlineText value={r.name} required saved={ctx.savedId === r.id} onSave={(v) => saveName(r, v, ctx)} className={NAME_INPUT} />,
+});
+
+const TEAM_COLUMNS = [
+  { key: 'name', label: 'Team', width: 220, value: (t) => t.name || '', cellClassName: 'font-semibold text-grey-800 truncate' },
+  { key: 'leader', label: 'Leader', width: 200, value: (t) => t.leader_name || '', cellClassName: 'text-grey-600 truncate' },
+  statusColumn(),
+];
+
+const CATEGORY_COLUMNS = [
+  nameEditColumn('Name', (c, v, ctx) => ctx.rename(c, v, c.description)),
+  {
+    key: 'description', label: 'Description', width: 280, value: (c) => c.description || '',
+    render: (c, ctx) => <InlineText value={c.description} placeholder="—" onSave={(v) => ctx.rename(c, c.name, v || null)} className={TEXT_INPUT} />,
+  },
+  statusColumn(),
+];
+
+const MAIN_TASK_COLUMNS = [nameEditColumn('Process', (mt, v, ctx) => ctx.rename(mt, v)), statusColumn()];
+
+const ACTIVITY_COLUMNS = [
+  nameEditColumn('Activity', (a, v, ctx) => ctx.rename(a, v)),
+  {
+    key: 'process', label: 'Process', width: 220, value: (a) => a.main_task_name || '',
+    render: (a, ctx) => (
+      <select className={SMALL_SELECT} value={a.main_task_id || ''} onChange={(e) => ctx.updateMainTask(a, e.target.value)}>
+        {ctx.mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}{!m.is_active ? ' (inactive)' : ''}</option>)}
+      </select>
+    ),
+  },
+  statusColumn(),
+];
+
+const TASK_TYPE_COLUMNS = [
+  {
+    key: 'name', label: 'Name', width: 240, value: (t) => t.name || '',
+    render: (t, ctx) => (
+      <>
+        <div className="flex items-center gap-1.5">
+          <InlineText value={t.name} required onSave={(v) => ctx.rename(t, v)} className={NAME_INPUT} />
+          {t.is_protected ? <Badge tone="pending">Built-in</Badge> : null}
+        </div>
+        {ctx.savedId === t.id && (
+          <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
+            <Check className="w-3 h-3" /> Saved
+          </div>
+        )}
+      </>
+    ),
+  },
+  {
+    key: 'repeats', label: 'Repeats?', width: 110, value: (t) => (t.mechanic === 'recurring' ? 'Yes' : 'No'),
+    render: (t) => (
+      <span className="text-grey-500 inline-flex items-center gap-1">
+        {t.mechanic === 'recurring' && <Repeat className="w-3.5 h-3.5 text-brand-500" />}{t.mechanic === 'recurring' ? 'Yes' : 'No'}
+      </span>
+    ),
+  },
+  statusColumn(),
+];
+
+const RECURRING_COLUMNS = [
+  { key: 'task', label: 'Task', width: 240, value: (r) => r.title || '', cellClassName: 'font-semibold text-grey-800 break-words' },
+  { key: 'employee', label: 'Assigned to', width: 150, value: (r) => r.employee_name || '', cellClassName: 'text-grey-500 truncate' },
+  { key: 'type', label: 'Type', width: 130, value: (r) => r.task_type_name || '', cellClassName: 'text-grey-500 truncate' },
+  { key: 'process', label: 'Process', width: 170, value: (r) => r.main_task_name || '', cellClassName: 'text-grey-500 truncate' },
+  { key: 'frequency', label: 'Frequency', width: 160, value: (r) => r.frequency || '', cellClassName: 'text-grey-500' },
+  statusColumn('Active', 'Paused'),
+];
+
+// Users: the org chart indent only means something in the default (hierarchy) order, so it's dropped as
+// soon as the list is sorted, filtered or searched (ctx.indent).
+const USER_COLUMNS = [
+  {
+    key: 'name', label: 'Name', width: 240, value: (u) => u.full_name || '', cellClassName: 'font-semibold text-grey-800',
+    render: (u, ctx) => (
+      <div style={{ paddingLeft: ctx.indent ? `${u.depth * 20}px` : 0 }}>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span>{u.full_name}</span>
+          {u.is_super_admin_protected ? <Badge tone="pending">Protected</Badge> : null}
+        </div>
+        <div className="flex items-center gap-1 mt-0.5">
+          <span className="text-[11px] font-normal text-grey-400 whitespace-nowrap">reports to</span>
+          <select
+            className="text-[11px] font-normal text-grey-500 border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-brand-500/40 rounded px-0.5 -ml-0.5 cursor-pointer hover:text-brand-600 transition-colors"
+            value={u.manager_id || ''}
+            onChange={(e) => ctx.updateUser(u, { manager_id: e.target.value || null })}
+          >
+            <option value="">— no one</option>
+            {ctx.managers.filter((m) => m.id !== u.id).map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+          </select>
+        </div>
+      </div>
+    ),
+  },
+  {
+    key: 'jobTitle', label: 'Job Title', width: 150, value: (u) => u.job_title || '',
+    render: (u, ctx) => <InlineText value={u.job_title} placeholder="—" onSave={(v) => ctx.updateUser(u, { job_title: v || null })} className={SMALL_INPUT} />,
+  },
+  {
+    key: 'email', label: 'Email', width: 210, value: (u) => u.email || '',
+    render: (u, ctx) => (
+      <InlineText
+        type="email"
+        value={u.email}
+        required
+        disabled={!!u.is_super_admin_protected && ctx.currentUser.role !== 'super_admin'}
+        onSave={(v) => ctx.updateUser(u, { email: v })}
+        className={SMALL_INPUT}
+      />
+    ),
+  },
+  {
+    key: 'role', label: 'Role', width: 160, value: (u) => u.role || '', format: (v) => ROLES.find(([r]) => r === v)?.[1] || v,
+    order: ['super_admin', 'admin', 'senior_management', 'leader', 'employee'],
+    render: (u, ctx) => (
+      <select
+        disabled={!!u.is_super_admin_protected}
+        className={`text-xs font-semibold rounded-full px-2.5 py-1 border-0 cursor-pointer transition-opacity focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:cursor-not-allowed disabled:opacity-80 ${badgeClassFor(u.role)}`}
+        value={u.role}
+        onChange={(e) => ctx.updateUser(u, { role: e.target.value })}
+      >
+        {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    ),
+  },
+  {
+    key: 'team', label: 'Team', width: 150, value: (u) => u.team_name || '',
+    render: (u, ctx) => (
+      <select className={SMALL_SELECT} value={u.team_id || ''} onChange={(e) => ctx.updateUser(u, { team_id: e.target.value || null })}>
+        <option value="">—</option>
+        {ctx.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+      </select>
+    ),
+  },
+  statusColumn(),
 ];
 
 export default function Admin() {
@@ -133,28 +329,21 @@ function TeamsTab() {
           Leader is figured out automatically — whoever on the team most other members report to. Change it by updating "Reports To" under Admin → Users.
         </p>
       )}
-      {items.length === 0 ? (
-        <EmptyState icon={<IllustrationTeam className="w-14 h-14 mx-auto" />} title="No teams yet">
-          Add one above to get started.
-        </EmptyState>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm mt-3">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Team</th><th>Leader</th><th>Status</th><th colSpan={2}></th></tr></thead>
-            <tbody>
-              {items.map((t, i) => (
-                <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                  <td className="py-2 font-semibold text-grey-800">{t.name}</td>
-                  <td className="text-grey-600">{t.leader_name || <span className="text-grey-300">—</span>}</td>
-                  <td><Badge tone={t.is_active ? 'completed' : 'support_required'}>{t.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                  <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(t)}>{t.is_active ? 'Deactivate' : 'Activate'}</button></td>
-                  <td><DeleteButton confirmLabel={`Delete "${t.name}"? This can't be undone.`} onConfirm={() => remove(t)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+          data={items}
+          columns={TEAM_COLUMNS}
+          tableId="admin-teams"
+          itemNoun={['team', 'teams']}
+          searchPlaceholder="Search teams…"
+          emptyIcon={<IllustrationTeam className="w-14 h-14 mx-auto" />}
+          emptyTitle="No teams yet"
+          emptyBody="Add one above to get started."
+          rowActionsLabel=""
+          rowActionsWidth={170}
+          renderRowActions={(t) => (
+            <RowControls toggleLabel={t.is_active ? 'Deactivate' : 'Activate'} onToggle={() => toggle(t)} confirmLabel={`Delete "${t.name}"? This can't be undone.`} onDelete={() => remove(t)} />
+          )}
+        />
       <ErrorBanner message={loadError} />
       {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
       <ErrorBanner message={error} />
@@ -247,48 +436,21 @@ function CategoriesTab() {
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Function</Button>
         </div>
       </Modal>
-      {items.length === 0 ? (
-        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No Functions yet">
-          Add one above to get started.
-        </EmptyState>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm mt-3">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Name</th><th>Description</th><th>Status</th><th colSpan={2}></th></tr></thead>
-            <tbody>
-              {items.map((c, i) => (
-                <tr key={c.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                  <td className="py-2 pr-2">
-                    <input
-                      type="text"
-                      defaultValue={c.name}
-                      onBlur={(e) => { if (e.target.value.trim() && e.target.value !== c.name) rename(c, e.target.value, c.description); else e.target.value = c.name; }}
-                      className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                    />
-                    {savedId === c.id && (
-                      <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
-                        <Check className="w-3 h-3" /> Saved
-                      </div>
-                    )}
-                  </td>
-                  <td className="pr-2">
-                    <input
-                      type="text"
-                      defaultValue={c.description || ''}
-                      placeholder="—"
-                      onBlur={(e) => { if (e.target.value !== (c.description || '')) rename(c, c.name, e.target.value || null); }}
-                      className="w-40 text-grey-500 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                    />
-                  </td>
-                  <td><Badge tone={c.is_active ? 'completed' : 'support_required'}>{c.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                  <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(c)}>{c.is_active ? 'Deactivate' : 'Activate'}</button></td>
-                  <td><DeleteButton confirmLabel={`Delete "${c.name}"? This can't be undone.`} onConfirm={() => remove(c)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+          data={items}
+          columns={CATEGORY_COLUMNS}
+          tableId="admin-functions"
+          itemNoun={['Function', 'Functions']}
+          searchPlaceholder="Search Functions…"
+          cellContext={{ rename, savedId }}
+          emptyTitle="No Functions yet"
+          emptyBody="Add one above to get started."
+          rowActionsLabel=""
+          rowActionsWidth={170}
+          renderRowActions={(c) => (
+            <RowControls toggleLabel={c.is_active ? 'Deactivate' : 'Activate'} onToggle={() => toggle(c)} confirmLabel={`Delete "${c.name}"? This can't be undone.`} onDelete={() => remove(c)} />
+          )}
+        />
       <ErrorBanner message={loadError} />
       {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
       <ErrorBanner message={error} />
@@ -383,39 +545,21 @@ function MainTasksTab() {
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Process</Button>
         </div>
       </Modal>
-      {items.length === 0 ? (
-        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No Processes yet">
-          Add one above to get started.
-        </EmptyState>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm mt-3">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Process</th><th>Status</th><th colSpan={2}></th></tr></thead>
-            <tbody>
-              {items.map((mt, i) => (
-                <tr key={mt.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                  <td className="py-2 pr-2">
-                    <input
-                      type="text"
-                      defaultValue={mt.name}
-                      onBlur={(e) => { if (e.target.value.trim() && e.target.value !== mt.name) rename(mt, e.target.value); else e.target.value = mt.name; }}
-                      className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                    />
-                    {savedId === mt.id && (
-                      <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
-                        <Check className="w-3 h-3" /> Saved
-                      </div>
-                    )}
-                  </td>
-                  <td><Badge tone={mt.is_active ? 'completed' : 'support_required'}>{mt.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                  <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(mt)}>{mt.is_active ? 'Deactivate' : 'Activate'}</button></td>
-                  <td><DeleteButton confirmLabel={`Delete "${mt.name}"? This can't be undone.`} onConfirm={() => remove(mt)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+          data={items}
+          columns={MAIN_TASK_COLUMNS}
+          tableId="admin-processes"
+          itemNoun={['Process', 'Processes']}
+          searchPlaceholder="Search Processes…"
+          cellContext={{ rename, savedId }}
+          emptyTitle="No Processes yet"
+          emptyBody="Add one above to get started."
+          rowActionsLabel=""
+          rowActionsWidth={170}
+          renderRowActions={(mt) => (
+            <RowControls toggleLabel={mt.is_active ? 'Deactivate' : 'Activate'} onToggle={() => toggle(mt)} confirmLabel={`Delete "${mt.name}"? This can't be undone.`} onDelete={() => remove(mt)} />
+          )}
+        />
       <ErrorBanner message={loadError} />
       {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
       <ErrorBanner message={error} />
@@ -529,48 +673,21 @@ function ActivitiesTab() {
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Activity</Button>
         </div>
       </Modal>
-      {items.length === 0 ? (
-        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No Activities yet">
-          Add one above to get started.
-        </EmptyState>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm mt-3">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Activity</th><th>Process</th><th>Status</th><th colSpan={2}></th></tr></thead>
-            <tbody>
-              {items.map((a, i) => (
-                <tr key={a.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                  <td className="py-2 pr-2">
-                    <input
-                      type="text"
-                      defaultValue={a.name}
-                      onBlur={(e) => { if (e.target.value.trim() && e.target.value !== a.name) rename(a, e.target.value); else e.target.value = a.name; }}
-                      className="w-40 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                    />
-                    {savedId === a.id && (
-                      <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
-                        <Check className="w-3 h-3" /> Saved
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <select
-                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-                      value={a.main_task_id || ''}
-                      onChange={(e) => updateMainTask(a, e.target.value)}
-                    >
-                      {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}{!m.is_active ? ' (inactive)' : ''}</option>)}
-                    </select>
-                  </td>
-                  <td><Badge tone={a.is_active ? 'completed' : 'support_required'}>{a.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                  <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(a)}>{a.is_active ? 'Deactivate' : 'Activate'}</button></td>
-                  <td><DeleteButton confirmLabel={`Delete "${a.name}"? This can't be undone.`} onConfirm={() => remove(a)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+          data={items}
+          columns={ACTIVITY_COLUMNS}
+          tableId="admin-activities"
+          itemNoun={['Activity', 'Activities']}
+          searchPlaceholder="Search Activities…"
+          cellContext={{ rename, savedId, mainTasks, updateMainTask }}
+          emptyTitle="No Activities yet"
+          emptyBody="Add one above to get started."
+          rowActionsLabel=""
+          rowActionsWidth={170}
+          renderRowActions={(a) => (
+            <RowControls toggleLabel={a.is_active ? 'Deactivate' : 'Activate'} onToggle={() => toggle(a)} confirmLabel={`Delete "${a.name}"? This can't be undone.`} onDelete={() => remove(a)} />
+          )}
+        />
       <ErrorBanner message={loadError} />
       {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
       <ErrorBanner message={error} />
@@ -624,6 +741,13 @@ function UsersTab() {
     for (const u of items) if (!visited.has(u.id)) ordered.push({ ...u, depth: 0 });
     return ordered;
   }, [items]);
+  // Team name joined in here (the users endpoint only returns team_id) so the Team column can filter and
+  // search by the name it shows.
+  const userRows = useMemo(() => {
+    const teamName = new Map(teams.map((t) => [t.id, t.name]));
+    return sortedItems.map((u) => ({ ...u, team_name: teamName.get(u.team_id) || '' }));
+  }, [sortedItems, teams]);
+  const userTable = useDataTable(userRows, USER_COLUMNS, { tableId: 'admin-users' });
 
   function load() {
     setLoadError('');
@@ -710,100 +834,30 @@ function UsersTab() {
         <p className="text-xs text-grey-400 mb-3">
           Deactivate keeps their history and lets them be reactivated later. Delete permanently removes the account — only allowed once they have no Scrum history recorded.
         </p>
-        {items.length === 0 ? (
-          <EmptyState icon={<IllustrationTeam className="w-14 h-14 mx-auto" />} title="No users yet">
-            Add one above to get started.
-          </EmptyState>
-        ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5 pr-2">Name</th><th className="pr-2">Job Title</th><th className="pr-2">Email</th><th className="pr-2">Role</th><th className="pr-2">Team</th><th className="pr-2">Status</th><th colSpan={2}></th></tr></thead>
-            <tbody>
-              {sortedItems.map((u, i) => (
-                <tr key={u.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                  <td className="py-2 pr-2 font-semibold text-grey-800">
-                    <div style={{ paddingLeft: `${u.depth * 20}px` }}>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span>{u.full_name}</span>
-                        {u.is_super_admin_protected ? <Badge tone="pending">Protected</Badge> : null}
-                      </div>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <span className="text-[11px] font-normal text-grey-400 whitespace-nowrap">reports to</span>
-                        <select
-                          className="text-[11px] font-normal text-grey-500 border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-brand-500/40 rounded px-0.5 -ml-0.5 cursor-pointer hover:text-brand-600 transition-colors"
-                          value={u.manager_id || ''}
-                          onChange={(e) => updateUser(u, { manager_id: e.target.value || null })}
-                        >
-                          <option value="">— no one</option>
-                          {managers.filter((m) => m.id !== u.id).map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="pr-2">
-                    <input
-                      type="text"
-                      defaultValue={u.job_title || ''}
-                      placeholder="—"
-                      onBlur={(e) => { if (e.target.value !== (u.job_title || '')) updateUser(u, { job_title: e.target.value || null }); }}
-                      className="w-28 border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-                    />
-                  </td>
-                  <td className="pr-2">
-                    <input
-                      type="email"
-                      defaultValue={u.email}
-                      disabled={!!u.is_super_admin_protected && currentUser.role !== 'super_admin'}
-                      onBlur={(e) => { if (e.target.value !== u.email) updateUser(u, { email: e.target.value }); }}
-                      className="w-40 border border-grey-200 rounded-lg px-1.5 py-1 text-xs text-grey-700 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 disabled:bg-grey-50 disabled:text-grey-400"
-                    />
-                  </td>
-                  <td className="pr-2">
-                    <select
-                      disabled={!!u.is_super_admin_protected}
-                      className={`text-xs font-semibold rounded-full px-2.5 py-1 border-0 cursor-pointer transition-opacity focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:cursor-not-allowed disabled:opacity-80 ${badgeClassFor(u.role)}`}
-                      value={u.role}
-                      onChange={(e) => updateUser(u, { role: e.target.value })}
-                    >
-                      {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                    </select>
-                  </td>
-                  <td className="pr-2">
-                    <select
-                      className="border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-                      value={u.team_id || ''}
-                      onChange={(e) => updateUser(u, { team_id: e.target.value || null })}
-                    >
-                      <option value="">—</option>
-                      {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                  </td>
-                  <td className="pr-2"><Badge tone={u.is_active ? 'completed' : 'support_required'}>{u.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                  <td className="pr-2">
-                    <div className="flex items-center gap-2 whitespace-nowrap">
-                      {!u.is_super_admin_protected && (
-                        <button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => updateUser(u, { is_active: u.is_active ? 0 : 1 })}>
-                          {u.is_active ? 'Deactivate' : 'Activate'}
-                        </button>
-                      )}
-                      <button className="text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors" onClick={() => setResetTarget(u)}>
-                        Reset Password
-                      </button>
-                    </div>
-                  </td>
-                  <td>
-                    <DeleteButton
-                      confirmLabel={`Delete "${u.full_name}"? This can't be undone.`}
-                      disabled={u.is_super_admin_protected || u.id === currentUserId}
-                      onConfirm={() => removeUser(u)}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        )}
+        <DataTableView
+          table={userTable}
+          itemNoun={['user', 'users']}
+          searchPlaceholder="Search users…"
+          cellContext={{ managers, teams, updateUser, currentUser, indent: !userTable.sort && !userTable.anyFilterActive }}
+          emptyIcon={<IllustrationTeam className="w-14 h-14 mx-auto" />}
+          emptyTitle="No users yet"
+          emptyBody="Add one above to get started."
+          rowActionsLabel=""
+          rowActionsWidth={250}
+          renderRowActions={(u) => (
+            <RowControls
+              toggleLabel={u.is_active ? 'Deactivate' : 'Activate'}
+              onToggle={u.is_super_admin_protected ? null : () => updateUser(u, { is_active: u.is_active ? 0 : 1 })}
+              confirmLabel={`Delete "${u.full_name}"? This can't be undone.`}
+              canDelete={!u.is_super_admin_protected && u.id !== currentUserId}
+              onDelete={() => removeUser(u)}
+            >
+              <button type="button" className="text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors" onClick={() => setResetTarget(u)}>
+                Reset Password
+              </button>
+            </RowControls>
+          )}
+        />
         <ErrorBanner message={loadError} />
         {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
         <ErrorBanner message={error} />
@@ -950,47 +1004,27 @@ function TaskTypesTab() {
           <Button onClick={create}><Plus className="w-4 h-4" /> Add Type</Button>
         </div>
       </Modal>
-      {items.length === 0 ? (
-        <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="No task types yet">
-          Add one above to get started.
-        </EmptyState>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm mt-3">
-            <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Name</th><th>Repeats?</th><th>Status</th><th colSpan={2}></th></tr></thead>
-            <tbody>
-              {items.map((t, i) => (
-                <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                  <td className="py-2 pr-2">
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        defaultValue={t.name}
-                        onBlur={(e) => { if (e.target.value.trim() && e.target.value !== t.name) rename(t, e.target.value); else e.target.value = t.name; }}
-                        className="w-32 font-semibold text-grey-800 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-                      />
-                      {t.is_protected ? <Badge tone="pending">Built-in</Badge> : null}
-                    </div>
-                    {savedId === t.id && (
-                      <div className="text-emerald-600 text-xs mt-0.5 flex items-center gap-1 animate-scale-in">
-                        <Check className="w-3 h-3" /> Saved
-                      </div>
-                    )}
-                  </td>
-                  <td className="text-grey-500 flex items-center gap-1 py-2">{t.mechanic === 'recurring' && <Repeat className="w-3.5 h-3.5 text-brand-500" />}{t.mechanic === 'recurring' ? 'Yes' : 'No'}</td>
-                  <td><Badge tone={t.is_active ? 'completed' : 'support_required'}>{t.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                  <td>
-                    {!t.is_protected && (
-                      <button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => toggle(t)}>{t.is_active ? 'Deactivate' : 'Activate'}</button>
-                    )}
-                  </td>
-                  <td><DeleteButton confirmLabel={`Delete "${t.name}"? This can't be undone.`} disabled={t.is_protected} onConfirm={() => remove(t)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+          data={items}
+          columns={TASK_TYPE_COLUMNS}
+          tableId="admin-task-types"
+          itemNoun={['task type', 'task types']}
+          searchPlaceholder="Search task types…"
+          cellContext={{ rename, savedId }}
+          emptyTitle="No task types yet"
+          emptyBody="Add one above to get started."
+          rowActionsLabel=""
+          rowActionsWidth={170}
+          renderRowActions={(t) => (
+            <RowControls
+              toggleLabel={t.is_active ? 'Deactivate' : 'Activate'}
+              onToggle={t.is_protected ? null : () => toggle(t)}
+              confirmLabel={`Delete "${t.name}"? This can't be undone.`}
+              canDelete={!t.is_protected}
+              onDelete={() => remove(t)}
+            />
+          )}
+        />
       <ErrorBanner message={loadError} />
       {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={load}>Retry</Button>}
     </Card>
@@ -1185,28 +1219,18 @@ function RecurringTasksTab() {
         <h2 className="font-bold text-grey-900 mb-3">Every Assigned Recurring Task</h2>
         <ErrorBanner message={loadError} />
         {loadError && <Button size="sm" variant="secondary" className="mb-3" onClick={load}>Retry</Button>}
-        {items.length === 0 ? (
-          <EmptyState icon={<IllustrationEmptyList className="w-14 h-14 mx-auto" />} title="Nothing created yet">Build one above.</EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-grey-500 border-b border-grey-200"><th className="py-1.5">Task</th><th>Assigned to</th><th>Type</th><th>Process</th><th>Frequency</th><th>Status</th><th></th></tr></thead>
-              <tbody>
-                {items.map((r, i) => (
-                  <tr key={r.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                    <td className="py-2 font-semibold text-grey-800">{r.title}</td>
-                    <td className="text-grey-500">{r.employee_name}</td>
-                    <td className="text-grey-500">{r.task_type_name || '—'}</td>
-                    <td className="text-grey-500">{r.main_task_name || '—'}</td>
-                    <td className="text-grey-500">{r.frequency}</td>
-                    <td><Badge tone={r.is_active ? 'completed' : 'support_required'}>{r.is_active ? 'Active' : 'Paused'}</Badge></td>
-                    <td><button className="text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors" onClick={() => togglePause(r)}>{r.is_active ? 'Pause' : 'Resume'}</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          data={items}
+          columns={RECURRING_COLUMNS}
+          tableId="admin-recurring"
+          itemNoun={['recurring task', 'recurring tasks']}
+          searchPlaceholder="Search recurring tasks…"
+          emptyTitle="Nothing created yet"
+          emptyBody="Build one above."
+          rowActionsLabel=""
+          rowActionsWidth={100}
+          renderRowActions={(r) => <RowControls toggleLabel={r.is_active ? 'Pause' : 'Resume'} onToggle={() => togglePause(r)} />}
+        />
       </Card>
     </div>
   );

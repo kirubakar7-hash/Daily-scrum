@@ -98,6 +98,8 @@ export function DataTableView({
   noMatchTitle = 'No rows match these filters',
   noMatchBody = 'Adjust a filter, or use "Clear filters" above.',
   searchPlaceholder = 'Search…',
+  // false = no search/count/Columns row at all, for a compact summary table (headers still sort/filter).
+  showToolbar = true,
   showSearch = true,
   showColumnManager = true,
   toolbarExtra,
@@ -130,6 +132,7 @@ export function DataTableView({
 
   return (
     <div className={className}>
+      {showToolbar && (
       <div className="flex flex-wrap items-center gap-2 mb-3">
         {showSearch && (
           <div className="relative w-full sm:w-56">
@@ -164,6 +167,7 @@ export function DataTableView({
           </button>
         )}
       </div>
+      )}
 
       {bulkActions && table.selectedIds.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-2.5 mb-3 animate-scale-in">
@@ -319,7 +323,7 @@ export function DataTableView({
 
 const NO_ROWS = [];
 
-export default function DataTable({ data, columns, tableId, staleLabel, ...view }) {
-  const table = useDataTable(data ?? NO_ROWS, columns, { tableId, staleLabel, loading: data === null });
+export default function DataTable({ data, columns, tableId, staleLabel, defaultSort, pageSize, ...view }) {
+  const table = useDataTable(data ?? NO_ROWS, columns, { tableId, staleLabel, defaultSort, pageSize, loading: data === null });
   return <DataTableView table={table} {...view} />;
 }

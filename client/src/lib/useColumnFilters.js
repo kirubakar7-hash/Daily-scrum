@@ -14,6 +14,10 @@ import { useCallback, useMemo, useState } from 'react';
 
 const BLANK_LABEL = '(Blanks)';
 
+// Filter values are always compared as text, so a numeric column (a count of 0, say) filters like any other
+// instead of 0 being mistaken for a blank cell.
+const cellKey = (column, row) => String(column.value(row) ?? '');
+
 function optionLabel(column, value) {
   if (value === '') return BLANK_LABEL;
   return column.format ? column.format(value) : value;
@@ -23,13 +27,13 @@ function optionLabel(column, value) {
 // no rows in this table would only ever filter down to nothing. Empty cells get a "(Blanks)" entry,
 // otherwise unticking one Process would silently hide every row that has no Process at all.
 function columnOptions(rows, column) {
-  const values = [...new Set(rows.map((r) => column.value(r) ?? ''))];
+  const values = [...new Set(rows.map((r) => cellKey(column, r)))];
   const present = values.filter(Boolean);
   if (column.order) {
     const rank = (v) => { const i = column.order.indexOf(v); return i < 0 ? column.order.length : i; };
     present.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   } else {
-    present.sort((a, b) => a.localeCompare(b));
+    present.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }
   if (values.includes('')) present.push('');
   return present.map((v) => ({ value: v, label: optionLabel(column, v) }));
@@ -41,7 +45,7 @@ function columnOptions(rows, column) {
 // the popover keeps it in the selection rather than silently dropping it.
 function withSelectedValues(options, selected, column, staleLabel, rows) {
   const listed = new Set(options.map((o) => o.value));
-  const inRows = new Set(rows.map((r) => column.value(r) ?? ''));
+  const inRows = new Set(rows.map((r) => cellKey(column, r)));
   const gone = selected.filter((v) => !listed.has(v) && !inRows.has(v));
   if (gone.length === 0) return options;
   return [...options, ...gone.map((v) => ({ value: v, label: optionLabel(column, v), stale: staleLabel }))];
@@ -50,7 +54,7 @@ function withSelectedValues(options, selected, column, staleLabel, rows) {
 // AND across columns, optionally ignoring one column's own filter (for that column's option list).
 function rowsPassing(rows, columns, filters, exceptKey) {
   const active = columns.filter((c) => c.key !== exceptKey && filters[c.key].length > 0).map((c) => [c, new Set(filters[c.key])]);
-  return active.length ? rows.filter((r) => active.every(([c, allowed]) => allowed.has(c.value(r) ?? ''))) : rows;
+  return active.length ? rows.filter((r) => active.every(([c, allowed]) => allowed.has(cellKey(c, r)))) : rows;
 }
 
 const emptyFilters = (columns) => Object.fromEntries(columns.map((c) => [c.key, []]));
