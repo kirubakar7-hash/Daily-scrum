@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatBusinessDate } from '../lib/businessDate';
+import { useColumnFilters } from '../lib/useColumnFilters';
 import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationEmptyList, IllustrationSearch, Input, Select, Skeleton, humanize } from '../components/ui';
+import { ColumnFilterPopover, FilterFunnel } from '../components/ColumnFilter';
 import HelpBanner from '../components/HelpBanner';
 import {
   History as HistoryIcon,
@@ -22,6 +24,38 @@ const TABS = [
   ['Search', Search],
 ];
 const PRIORITIES = ['Low', 'Medium', 'High'];
+const NO_ROWS = [];
+
+// Excel-style filters on the Task Records table, narrowing the records "Show me" loaded (up to the
+// server's 500 cap). `value` is what each cell displays; Type and Status cells go through Badge, which
+// humanizes. Notes is free-form text plus badges, so it has no filter.
+const RECORD_COLUMNS = [
+  { key: 'code', label: 'Code', value: (c) => c.code || '' },
+  { key: 'date', label: 'Date', value: (c) => c.scrum_date || '' },
+  { key: 'employee', label: 'Employee', value: (c) => c.full_name || '' },
+  { key: 'task', label: 'Task', value: (c) => c.description || '' },
+  { key: 'type', label: 'Type', value: (c) => c.type || '', format: humanize },
+  { key: 'process', label: 'Process', value: (c) => c.main_task_name || '' },
+  { key: 'activity', label: 'Activity', value: (c) => c.task_activity_name || '' },
+  { key: 'reviewer', label: 'Reviewer', value: (c) => c.reviewer_name || '' },
+  { key: 'status', label: 'Status', value: (c) => c.status || '', format: humanize, order: ['pending', 'in_progress', 'support_required', 'completed'] },
+  { key: 'completed', label: 'Completed', value: (c) => (c.completed_at ? formatBusinessDate(c.completed_at) : '') },
+];
+
+/** Splits CSV text into raw records without re-serializing any cell, so a kept row stays byte-identical to
+ *  what the server sent. A description can hold a newline inside its quotes, so a plain split('\n') would
+ *  break a record in two; an escaped "" toggles twice, which leaves the quote state unchanged. */
+function csvRecords(text) {
+  const records = [];
+  let start = 0;
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '"') inQuotes = !inQuotes;
+    else if (text[i] === '\n' && !inQuotes) { records.push(text.slice(start, i)); start = i + 1; }
+  }
+  if (start < text.length) records.push(text.slice(start));
+  return records;
+}
 
 /** Reads whichever of EMPTY_FILTERS' keys are present in the URL — this is what makes a Dashboard KPI's
  *  "?status=support_required"-style drill-down link actually land pre-filtered instead of on a blank page. */
@@ -46,6 +80,8 @@ export default function History() {
   const [employeeOptions, setEmployeeOptions] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [commitmentsTruncated, setCommitmentsTruncated] = useState(false);
+  const recordFilters = useColumnFilters(commitments || NO_ROWS, RECORD_COLUMNS, { staleLabel: 'not in these records' });
+  const shownRecords = recordFilters.filtered;
 
   function query(f = filters) {
     setLoadError('');
@@ -68,6 +104,7 @@ export default function History() {
 
   function clearFilters() {
     setFilters(EMPTY_FILTERS);
+    recordFilters.clearAll();
     query(EMPTY_FILTERS);
   }
 
@@ -84,7 +121,15 @@ export default function History() {
         // this check the JSON error body would get downloaded and named scrum-history.csv as if it had
         // succeeded, instead of surfacing the actual error.
         if (!res.ok) throw new Error(`Export failed (${res.status}).`);
-        return res.blob();
+        if (!recordFilters.anyActive) return res.blob();
+        // Column filters are applied in the browser, so keep the server's own file (same columns, same
+        // formula-injection escaping) and drop just the records the table isn't showing, matched on Code.
+        return res.text().then((text) => {
+          const [header, ...rows] = csvRecords(text);
+          const shown = new Set(shownRecords.map((c) => c.code));
+          const kept = rows.filter((r) => shown.has(r.match(/^"([^"]*)"/)?.[1]));
+          return new Blob([[header, ...kept].join('\n')], { type: 'text/csv' });
+        });
       })
       .then((blob) => {
         const url = URL.createObjectURL(blob);
@@ -237,7 +282,7 @@ export default function History() {
           </Card>
 
           <Card className="animate-fade-in-up" style={{ animationDelay: '160ms' }}>
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-1">
               <ClipboardList className="w-4 h-4 text-brand-600" />
               <h2 className="font-semibold text-grey-900">Task Records</h2>
             </div>
@@ -248,25 +293,38 @@ export default function History() {
             ) : commitments.length === 0 ? (
               <EmptyState icon={<IllustrationEmptyList className="w-16 h-16 mx-auto" />} title="Nothing here yet">No records match this filter — try widening the date range.</EmptyState>
             ) : (
+              <>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
+                <span className="text-xs text-grey-400">{shownRecords.length} of {commitments.length} record{commitments.length === 1 ? '' : 's'}</span>
+                <span className="text-xs text-grey-400">Click a column's <Filter className="inline w-3 h-3 -mt-0.5" /> icon to filter these records.</span>
+                {recordFilters.anyActive && (
+                  <button onClick={recordFilters.clearAll} className="inline-flex items-center gap-1 text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors">
+                    <XCircle className="w-3.5 h-3.5" /> Clear column filters
+                  </button>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-grey-500 border-b border-grey-100 text-[11px] uppercase tracking-wide">
-                      <th className="py-2 pr-3 font-semibold">Code</th>
-                      <th className="pr-3 font-semibold">Date</th>
-                      <th className="pr-3 font-semibold">Employee</th>
-                      <th className="pr-3 font-semibold">Task</th>
-                      <th className="pr-3 font-semibold">Type</th>
-                      <th className="pr-3 font-semibold">Process</th>
-                      <th className="pr-3 font-semibold">Activity</th>
-                      <th className="pr-3 font-semibold">Reviewer</th>
-                      <th className="pr-3 font-semibold">Status</th>
-                      <th className="pr-3 font-semibold">Completed</th>
-                      <th className="pr-3 font-semibold">Notes</th>
+                      {RECORD_COLUMNS.map((col) => (
+                        <th key={col.key} className="py-2 pr-3 font-semibold whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">
+                            {col.label}
+                            <FilterFunnel
+                              label={col.label}
+                              active={recordFilters.isFiltered(col.key)}
+                              open={recordFilters.isOpen(col.key)}
+                              onToggle={(el) => recordFilters.toggleFilter(col.key, el)}
+                            />
+                          </span>
+                        </th>
+                      ))}
+                      <th className="py-2 pr-3 font-semibold">Notes</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {commitments.map((c, i) => (
+                    {shownRecords.map((c, i) => (
                       <tr key={c.id} className="border-b border-grey-50 last:border-0 hover:bg-grey-50 transition-colors align-top animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
                         <td className="py-2 pr-3 whitespace-nowrap font-mono text-xs text-grey-500">{c.code}</td>
                         <td className="pr-3 whitespace-nowrap text-grey-500">{c.scrum_date}</td>
@@ -295,11 +353,21 @@ export default function History() {
                     ))}
                   </tbody>
                 </table>
-                {commitmentsTruncated && (
-                  <p className="text-xs text-grey-400 mt-2">Showing the first {commitments.length} matching records — narrow the date range or filters above to see the rest.</p>
-                )}
               </div>
+              {/* Outside the horizontal scroller, so it stays on screen even when the table is scrolled sideways. */}
+              {shownRecords.length === 0 && (
+                <EmptyState icon={<IllustrationSearch className="w-16 h-16 mx-auto" />} title="No records match these column filters">
+                  Adjust a column filter, or use "Clear column filters" above.
+                </EmptyState>
+              )}
+              {commitmentsTruncated && (
+                <p className="text-xs text-grey-400 mt-2">
+                  Showing the first {commitments.length} matching records{recordFilters.anyActive ? ', and column filters only search these' : ''} — narrow the date range or filters above to see the rest.
+                </p>
+              )}
+              </>
             )}
+            {recordFilters.popoverProps && <ColumnFilterPopover key={recordFilters.popoverProps.column.key} {...recordFilters.popoverProps} />}
           </Card>
         </>
       )}
