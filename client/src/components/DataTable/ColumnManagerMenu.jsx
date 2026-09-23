@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GripVertical, RotateCcw, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, GripVertical, RotateCcw, X } from 'lucide-react';
 import { usePopoverPanel } from '../../lib/usePopoverPanel';
 
 const PANEL_WIDTH = 240;
@@ -9,11 +9,14 @@ const PANEL_WIDTH = 240;
  *  visibility and widths). Same portal/positioning plumbing as the column filter popover, so it behaves
  *  identically (follows its trigger, traps Tab, closes on outside click/Escape). Column filters are
  *  untouched by anything here — hiding a column is a display preference, not a change of data scope. */
-export function ColumnManagerMenu({ orderedColumns, hiddenKeys, onToggleVisible, onReorder, onReset, anchorEl, onClose }) {
+export function ColumnManagerMenu({ orderedColumns, hiddenKeys, onToggleVisible, onReorder, onMove, onReset, anchorEl, onClose }) {
   const [dragKey, setDragKey] = useState(null);
   const [overKey, setOverKey] = useState(null);
   const stableOnClose = useCallback(() => onClose(), [onClose]);
   const { pos, panelRef, closeToAnchor } = usePopoverPanel(anchorEl, stableOnClose, { width: PANEL_WIDTH });
+
+  const visibleCount = orderedColumns.length - hiddenKeys.length;
+  const arrowClass = 'w-5 h-5 rounded flex items-center justify-center text-grey-400 hover:text-brand-700 hover:bg-brand-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-grey-400 transition-colors';
 
   function onDrop(key) {
     if (dragKey && dragKey !== key) onReorder(dragKey, key);
@@ -38,7 +41,9 @@ export function ColumnManagerMenu({ orderedColumns, hiddenKeys, onToggleVisible,
       </div>
 
       <div className="flex-1 min-h-16 max-h-72 overflow-y-auto py-1">
-        {orderedColumns.map((col) => (
+        {orderedColumns.map((col, i) => {
+          const visible = !hiddenKeys.includes(col.key);
+          return (
           <div
             key={col.key}
             draggable
@@ -53,15 +58,23 @@ export function ColumnManagerMenu({ orderedColumns, hiddenKeys, onToggleVisible,
             <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
               <input
                 type="checkbox"
-                checked={!hiddenKeys.includes(col.key)}
-                disabled={col.alwaysVisible}
+                checked={visible}
+                // The last visible column stays on — hiding it would leave an empty table frame.
+                disabled={col.alwaysVisible || (visible && visibleCount <= 1)}
                 onChange={() => onToggleVisible(col.key)}
                 className="cursor-pointer shrink-0 disabled:cursor-not-allowed"
               />
               <span className="truncate">{col.label}</span>
             </label>
+            <button type="button" onClick={() => onMove(col.key, -1)} disabled={i === 0} aria-label={`Move ${col.label} left`} title="Move left" className={arrowClass}>
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+            <button type="button" onClick={() => onMove(col.key, 1)} disabled={i === orderedColumns.length - 1} aria-label={`Move ${col.label} right`} title="Move right" className={arrowClass}>
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="px-3 py-2 border-t border-grey-100 shrink-0">

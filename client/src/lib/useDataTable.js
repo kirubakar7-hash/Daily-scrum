@@ -11,7 +11,8 @@ import { useColumnFilters } from './useColumnFilters';
  * option label (only when the cell shows the value transformed, e.g. through Badge's humanize), order?:
  * string[] (enum-like columns — doubles as filter-list order AND sort rank), render?(row) => ReactNode
  * (cell content; falls back to value(row)), width?, minWidth? (default 80), align?, sortable? (default
- * true), filterable? (default true), searchable? (default true), defaultHidden? (starting visibility).
+ * true), filterable? (default true), searchable? (default true), defaultHidden? (starting visibility), alwaysVisible?
+ * (can't be hidden), cellClassName? (td classes).
  *
  * Filtering reuses lib/useColumnFilters as-is — this hook only adds the layout (visible columns, order,
  * width — persisted per `tableId`) and the sort/search layer on top of what it already returns. */
@@ -41,14 +42,23 @@ function defaultPrefs(columns) {
   return { order: columns.map((c) => c.key), hidden: columns.filter((c) => c.defaultHidden).map((c) => c.key), widths: {} };
 }
 
-// A saved layout from an earlier version of this table's column config: drop keys that no longer exist,
-// append any new column at the end so it's never silently invisible.
+// A saved layout from an earlier version of this table's column config — or anything else that happens
+// to be in storage under this key. Every field is validated, because a value that throws here would
+// crash the page on every visit until the user cleared their storage: drop unknown and duplicate keys,
+// append any new column at the end so it's never silently invisible, keep only positive numeric widths.
 function reconcilePrefs(saved, columns) {
   const known = new Set(columns.map((c) => c.key));
-  const order = [...saved.order.filter((k) => known.has(k)), ...columns.map((c) => c.key).filter((k) => !saved.order.includes(k))];
-  const hidden = (saved.hidden || []).filter((k) => known.has(k));
-  const widths = Object.fromEntries(Object.entries(saved.widths || {}).filter(([k]) => known.has(k)));
-  return { order, hidden, widths };
+  const savedOrder = Array.isArray(saved?.order) ? saved.order : [];
+  const seen = new Set();
+  const order = [];
+  for (const k of [...savedOrder, ...columns.map((c) => c.key)]) {
+    if (known.has(k) && !seen.has(k)) { seen.add(k); order.push(k); }
+  }
+  const hidden = Array.isArray(saved?.hidden) ? [...new Set(saved.hidden.filter((k) => known.has(k)))] : [];
+  const rawWidths = saved?.widths && typeof saved.widths === 'object' && !Array.isArray(saved.widths) ? saved.widths : {};
+  const widths = Object.fromEntries(Object.entries(rawWidths).filter(([k, w]) => known.has(k) && Number.isFinite(w) && w > 0));
+  // Never restore a layout with every column hidden — the table would render as an empty frame.
+  return { order, hidden: hidden.length >= order.length ? [] : hidden, widths };
 }
 
 function compareRows(a, b, column) {
@@ -121,7 +131,26 @@ export function useDataTable(rows, columns, { tableId, staleLabel, searchPlaceho
   }
 
   function toggleVisible(key) {
-    setPrefs((p) => ({ ...p, hidden: p.hidden.includes(key) ? p.hidden.filter((k) => k !== key) : [...p.hidden, key] }));
+    setPrefs((p) => {
+      if (p.hidden.includes(key)) return { ...p, hidden: p.hidden.filter((k) => k !== key) };
+      if (columnByKey[key]?.alwaysVisible) return p;
+      // The last visible column can't be hidden — the table would render as an empty frame.
+      if (p.order.length - p.hidden.length <= 1) return p;
+      return { ...p, hidden: [...p.hidden, key] };
+    });
+  }
+
+  // One step left/right in the order — the keyboard and touch-screen way to reorder (native drag-and-drop
+  // doesn't fire on most phones).
+  function moveColumn(key, delta) {
+    setPrefs((p) => {
+      const from = p.order.indexOf(key);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= p.order.length) return p;
+      const order = [...p.order];
+      [order[from], order[to]] = [order[to], order[from]];
+      return { ...p, order };
+    });
   }
 
   function reorder(fromKey, toKey) {
@@ -161,6 +190,7 @@ export function useDataTable(rows, columns, { tableId, staleLabel, searchPlaceho
     widths: prefs.widths,
     isCustomized: prefs.hidden.length > 0 || prefs.order.some((k, i) => k !== columns[i]?.key) || Object.keys(prefs.widths).length > 0,
     toggleVisible,
+    moveColumn,
     reorder,
     resize,
     resetColumns,

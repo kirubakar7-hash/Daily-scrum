@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, Columns3Cog, GripVertical, Search, XCircle } from 'lucide-react';
 import { useDataTable } from '../../lib/useDataTable';
 import { EmptyState, IllustrationEmptyList, IllustrationSearch, Input, Skeleton } from '../ui';
@@ -26,10 +26,17 @@ function alignClass(align) {
   return ALIGN_CLASS[align] || ALIGN_CLASS.left;
 }
 
-function ResizeHandle({ columnKey, onResize }) {
+const KEY_RESIZE_STEP = 16;
+
+/** Right-edge resize grip. `resizingRef` is shared with the header cells so a resize gesture can never also
+ *  start the header's native column drag (the handle sits inside a draggable <th>). Arrow keys resize too. */
+function ResizeHandle({ columnKey, label, onResize, resizingRef }) {
   function onPointerDown(e) {
     e.preventDefault();
+    e.stopPropagation();
     const th = e.currentTarget.closest('th');
+    if (!th) return;
+    resizingRef.current = true;
     const startWidth = th.offsetWidth;
     const startX = e.clientX;
     document.body.style.cursor = 'col-resize';
@@ -41,29 +48,42 @@ function ResizeHandle({ columnKey, onResize }) {
     }
     function onUp() {
       cancelAnimationFrame(frame);
+      resizingRef.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     }
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }
+  function onKeyDown(e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const th = e.currentTarget.closest('th');
+    if (th) onResize(columnKey, th.offsetWidth + (e.key === 'ArrowRight' ? KEY_RESIZE_STEP : -KEY_RESIZE_STEP));
   }
   return (
     <div
       onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      tabIndex={0}
       role="separator"
       aria-orientation="vertical"
+      aria-label={`Resize ${label} column (left and right arrow keys)`}
       title="Drag to resize"
-      className="absolute top-0 right-0 h-full w-2 cursor-col-resize touch-none group/resize"
+      className="absolute top-0 right-0 h-full w-2 cursor-col-resize touch-none group/resize focus:outline-none focus-visible:bg-brand-100"
     >
       <div className="mx-auto h-full w-px bg-transparent group-hover/resize:bg-brand-300 group-active/resize:bg-brand-500" />
     </div>
   );
 }
 
-function EmptyCell() {
-  return <span className="text-grey-300">—</span>;
+function CellValue({ value }) {
+  if (value === null || value === undefined || value === '') return <span className="text-grey-300">—</span>;
+  return value;
 }
 
 export function DataTableView({
@@ -87,6 +107,7 @@ export function DataTableView({
   const [managerAnchor, setManagerAnchor] = useState(null);
   const [dragKey, setDragKey] = useState(null);
   const [dragOverKey, setDragOverKey] = useState(null);
+  const resizingRef = useRef(false);
 
   function onHeaderDrop(key) {
     if (dragKey && dragKey !== key) table.reorder(dragKey, key);
@@ -152,7 +173,11 @@ export function DataTableView({
                       key={col.key}
                       style={{ width, minWidth: col.minWidth ?? MIN_WIDTH }}
                       draggable
-                      onDragStart={(e) => { setDragKey(col.key); e.dataTransfer.effectAllowed = 'move'; }}
+                      onDragStart={(e) => {
+                        if (resizingRef.current) { e.preventDefault(); return; }
+                        setDragKey(col.key);
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
                       onDragOver={(e) => { e.preventDefault(); if (dragOverKey !== col.key) setDragOverKey(col.key); }}
                       onDragLeave={() => setDragOverKey((k) => (k === col.key ? null : k))}
                       onDrop={(e) => { e.preventDefault(); onHeaderDrop(col.key); }}
@@ -178,7 +203,7 @@ export function DataTableView({
                           />
                         )}
                       </div>
-                      <ResizeHandle columnKey={col.key} onResize={table.resize} />
+                      <ResizeHandle columnKey={col.key} label={col.label} onResize={table.resize} resizingRef={resizingRef} />
                     </th>
                   );
                 })}
@@ -196,7 +221,7 @@ export function DataTableView({
                     // overflow-hidden is load-bearing under table-fixed: without it, a nowrap cell whose
                     // text is wider than its column visually bleeds into the next cell instead of clipping.
                     <td key={col.key} className={`py-2.5 pr-4 overflow-hidden ${alignClass(col.align)} ${col.cellClassName || 'text-grey-700'}`}>
-                      {col.render ? col.render(row) : (col.value(row) || <EmptyCell />)}
+                      {col.render ? col.render(row) : <CellValue value={col.value(row)} />}
                     </td>
                   ))}
                   {renderRowActions && <td className="py-2.5 pr-4">{renderRowActions(row)}</td>}
@@ -219,6 +244,7 @@ export function DataTableView({
           hiddenKeys={table.hiddenKeys}
           onToggleVisible={table.toggleVisible}
           onReorder={table.reorder}
+          onMove={table.moveColumn}
           onReset={table.resetColumns}
           anchorEl={managerAnchor}
           onClose={() => setManagerAnchor(null)}
