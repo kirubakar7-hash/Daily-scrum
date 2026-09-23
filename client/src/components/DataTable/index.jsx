@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, Columns3Cog, GripVertical, Search, XCircle } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Columns3Cog, GripVertical, Search, XCircle } from 'lucide-react';
 import { useDataTable } from '../../lib/useDataTable';
 import { EmptyState, IllustrationEmptyList, IllustrationSearch, Input, Skeleton } from '../ui';
 import { ColumnFilterPopover, FilterFunnel } from '../ColumnFilter';
@@ -8,7 +8,8 @@ import { ColumnManagerMenu } from './ColumnManagerMenu';
 /* The one reusable table for the whole app. A page supplies `data` + `columns` (the single source of
  * truth — see lib/useDataTable.js for the column shape) and gets show/hide, drag-to-reorder, resize,
  * Excel-style per-column filtering, sorting, a global search box, loading/empty states and horizontal
- * scrolling for free. `toolbarExtra`/`renderRowActions` are the only page-specific hooks — everything
+ * scrolling for free — plus row checkboxes and paging when useDataTable is given `selectable`/`pageSize`.
+ * `toolbarExtra`, `bulkActions` and `renderRowActions` are the only page-specific hooks — everything
  * else about how a table looks and behaves lives here, once.
  *
  * Two ways to use it:
@@ -19,6 +20,8 @@ import { ColumnManagerMenu } from './ColumnManagerMenu';
  *                                                                    of exactly what's on screen) */
 
 const DEFAULT_WIDTH = 150;
+const CHECKBOX_WIDTH = 36;
+const pagerButton = 'w-7 h-7 rounded-lg flex items-center justify-center text-grey-500 hover:bg-grey-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors press-scale';
 const MIN_WIDTH = 80;
 const ALIGN_CLASS = { left: 'text-left', center: 'text-center', right: 'text-right' };
 
@@ -102,12 +105,22 @@ export function DataTableView({
   rowClassName,
   renderRowActions,
   rowActionsLabel = 'Actions',
+  rowActionsWidth = 140,
+  bulkActions,
+  itemNoun = ['row', 'rows'],
+  // Handed to every column's render(row, cellContext) — how a module-level column config reaches the page's
+  // own handlers (reload after an inline edit, open a detail panel) without being rebuilt every render.
+  cellContext,
   className = '',
 }) {
   const [managerAnchor, setManagerAnchor] = useState(null);
   const [dragKey, setDragKey] = useState(null);
   const [dragOverKey, setDragOverKey] = useState(null);
   const resizingRef = useRef(false);
+
+  const noun = (n) => (n === 1 ? itemNoun[0] : itemNoun[1]);
+  // Only shown when this page has something tickable, so a read-only list doesn't carry an empty column.
+  const showCheckboxes = table.selectionEnabled && table.selectableOnPage.length > 0;
 
   function onHeaderDrop(key) {
     if (dragKey && dragKey !== key) table.reorder(dragKey, key);
@@ -130,7 +143,7 @@ export function DataTableView({
             />
           </div>
         )}
-        <span className="text-xs text-grey-400">{table.matchedCount} of {table.totalCount} {table.matchedCount === 1 ? 'row' : 'rows'}</span>
+        <span className="text-xs text-grey-400">{table.matchedCount} of {table.totalCount} {noun(table.totalCount)}</span>
         {table.anyFilterActive && (
           <button onClick={table.clearFilters} className="inline-flex items-center gap-1 text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors">
             <XCircle className="w-3.5 h-3.5" /> Clear filters
@@ -152,6 +165,16 @@ export function DataTableView({
         )}
       </div>
 
+      {bulkActions && table.selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-2.5 mb-3 animate-scale-in">
+          <span className="text-sm font-semibold text-brand-800">{table.selectedIds.size} selected</span>
+          {bulkActions({ selectedIds: table.selectedIds, selectedRows: table.selectedRows, clearSelection: table.clearSelection })}
+          <button type="button" onClick={table.clearSelection} className="text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors ml-1">
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {table.loading ? (
         <div className="space-y-2">
           {Array.from({ length: loadingRows }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
@@ -164,6 +187,18 @@ export function DataTableView({
           <table className="w-full text-sm table-fixed">
             <thead>
               <tr className="text-left text-grey-500 border-b border-grey-200">
+                {showCheckboxes && (
+                  <th style={{ width: CHECKBOX_WIDTH }} className="py-2 pl-1 pr-2">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all on this page"
+                      checked={table.pageAllSelected}
+                      ref={(el) => { if (el) el.indeterminate = table.pageSomeSelected && !table.pageAllSelected; }}
+                      onChange={table.togglePage}
+                      className="cursor-pointer"
+                    />
+                  </th>
+                )}
                 {table.visibleColumns.map((col) => {
                   const width = table.widths[col.key] ?? col.width ?? DEFAULT_WIDTH;
                   const sorted = col.sortable !== false && table.sort?.key === col.key;
@@ -207,21 +242,34 @@ export function DataTableView({
                     </th>
                   );
                 })}
-                {renderRowActions && <th className="py-2 pr-4 font-semibold whitespace-nowrap">{rowActionsLabel}</th>}
+                {renderRowActions && <th style={{ width: rowActionsWidth }} className="py-2 pr-4 font-semibold whitespace-nowrap">{rowActionsLabel}</th>}
               </tr>
             </thead>
             <tbody>
-              {table.rows.map((row, i) => (
+              {table.pagedRows.map((row, i) => (
                 <tr
                   key={getRowId(row)}
                   className={`border-b border-grey-100 hover:bg-grey-50 transition-colors align-top animate-fade-in-up ${rowClassName ? rowClassName(row) : ''}`}
                   style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
                 >
+                  {showCheckboxes && (
+                    <td className="py-2.5 pl-1 pr-2">
+                      {table.canSelect(row) && (
+                        <input
+                          type="checkbox"
+                          checked={table.selectedIds.has(getRowId(row))}
+                          onChange={() => table.toggleRow(row)}
+                          aria-label="Select row"
+                          className="cursor-pointer"
+                        />
+                      )}
+                    </td>
+                  )}
                   {table.visibleColumns.map((col) => (
                     // overflow-hidden is load-bearing under table-fixed: without it, a nowrap cell whose
                     // text is wider than its column visually bleeds into the next cell instead of clipping.
                     <td key={col.key} className={`py-2.5 pr-4 overflow-hidden ${alignClass(col.align)} ${col.cellClassName || 'text-grey-700'}`}>
-                      {col.render ? col.render(row) : <CellValue value={col.value(row)} />}
+                      {col.render ? col.render(row, cellContext) : <CellValue value={col.value(row)} />}
                     </td>
                   ))}
                   {renderRowActions && <td className="py-2.5 pr-4">{renderRowActions(row)}</td>}
@@ -230,6 +278,21 @@ export function DataTableView({
             </tbody>
           </table>
         </div>
+        {table.pageCount > 1 && (
+          <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-grey-100">
+            <span className="text-xs text-grey-400">
+              Page {table.page} of {table.pageCount} — {table.matchedCount} {noun(table.matchedCount)}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button type="button" aria-label="Previous page" disabled={table.page <= 1} onClick={() => table.setPage(table.page - 1)} className={pagerButton}>
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button type="button" aria-label="Next page" disabled={table.page >= table.pageCount} onClick={() => table.setPage(table.page + 1)} className={pagerButton}>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
         {/* Outside the horizontal scroller, so it stays on screen even when the table is scrolled sideways. */}
         {table.matchedCount === 0 && (
           <EmptyState icon={<IllustrationSearch className="w-16 h-16 mx-auto" />} title={noMatchTitle}>{noMatchBody}</EmptyState>

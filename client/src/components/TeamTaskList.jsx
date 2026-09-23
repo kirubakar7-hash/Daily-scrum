@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy,
-  CalendarClock, History as HistoryIcon, User, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Pencil,
+  Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, MessageSquareText, LifeBuoy,
+  CalendarClock, History as HistoryIcon, User, Pencil,
   Tag, ListTree, ListChecks, Calendar, UserCheck, Flag,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { getBusinessDate } from '../lib/businessDate';
-import { useColumnFilters } from '../lib/useColumnFilters';
-import { ColumnFilterPopover, FilterFunnel } from './ColumnFilter';
-import { badgeClassFor, Badge, Button, DeleteButton, EmptyState, ErrorBanner, humanize, IllustrationEmptyList, IllustrationSearch, Input, Modal, Select, Skeleton, Textarea } from './ui';
+import { useDataTable } from '../lib/useDataTable';
+import { DataTableView } from './DataTable';
+import { badgeClassFor, Badge, Button, DeleteButton, ErrorBanner, humanize, Input, Modal, Select, Skeleton, Textarea } from './ui';
 import RecurrencePicker, { DEFAULT_RULE } from './RecurrencePicker';
 import InfoTip from './InfoTip';
 import ImportButton from './ImportButton';
@@ -17,21 +17,95 @@ import AuditTimeline from './AuditTimeline';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
 const STATUS_SORT_ORDER = ['pending', 'in_progress', 'support_required', 'completed'];
-// `value` is what each cell displays, so the filter list mirrors the column. Type/Priority/Status cells
-// render through Badge, which humanizes, so their labels are humanized too; the rest show raw text.
-const FILTER_COLUMNS = [
-  { key: 'taskId', label: 'Task ID', sortKey: 'code', value: (t) => (t.seq ? taskCode(t) : '') },
-  { key: 'task', label: 'Task', sortKey: 'task', value: (t) => t.description || '' },
-  { key: 'employee', label: 'Employee', sortKey: 'employee', value: (t) => t.employee_name || '' },
-  { key: 'type', label: 'Type', sortKey: null, value: (t) => typeLabel(t), format: humanize },
-  { key: 'mainTask', label: 'Process', sortKey: null, value: (t) => t.main_task_name || '' },
-  { key: 'priority', label: 'Priority', sortKey: 'priority', value: (t) => t.priority || '', format: humanize, order: PRIORITIES },
-  { key: 'due', label: 'Due', sortKey: 'due', value: (t) => t.due_date || '' },
-  { key: 'status', label: 'Status', sortKey: 'status', value: (t) => t.status || '', format: humanize, order: STATUS_SORT_ORDER },
+// DataTable column config — the single source of truth for what each column shows, sorts, filters and
+// searches by. `value` is what the cell displays (Type/Priority/Status cells go through Badge, which
+// humanizes, so their filter labels do too). Cells that need the page's own handlers — inline status and
+// due-date editing, the Task ID detail button — get them as `ctx` (DataTableView's cellContext):
+// { isReadOnly(task), onChanged(), openDetail(task) }.
+const TASK_COLUMNS = [
+  {
+    key: 'taskId', label: 'Task ID', width: 115, value: (t) => (t.seq ? taskCode(t) : ''),
+    render: (t, ctx) => (
+      <button
+        type="button"
+        onClick={() => ctx.openDetail(t)}
+        className="font-mono text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 px-1.5 py-0.5 rounded-md border border-brand-100 transition-colors press-scale"
+        title="View task detail"
+      >
+        {taskCode(t)}
+      </button>
+    ),
+  },
+  {
+    key: 'task', label: 'Task', width: 240, value: (t) => t.description || '', cellClassName: 'font-semibold text-grey-800 break-words',
+    render: (t) => (
+      <>
+        {t.description}
+        {t.status === 'support_required' && (t.non_completion_reason || t.non_completion_explanation) && (
+          <div className="flex items-start gap-1 mt-1 text-xs font-normal text-accent-700 bg-accent-50 rounded-lg px-2 py-1">
+            <MessageSquareText className="w-3 h-3 mt-0.5 shrink-0" />
+            <span>
+              {t.non_completion_reason && <strong>{t.non_completion_reason}</strong>}
+              {t.non_completion_reason && t.non_completion_explanation && ' — '}
+              {t.non_completion_explanation}
+            </span>
+          </div>
+        )}
+      </>
+    ),
+  },
+  { key: 'employee', label: 'Employee', width: 125, value: (t) => t.employee_name || '', cellClassName: 'text-grey-600 truncate' },
+  {
+    key: 'type', label: 'Type', width: 110, value: (t) => typeLabel(t), format: humanize,
+    render: (t) => (
+      <>
+        <Badge tone={t.type}>{typeLabel(t)}</Badge>
+        {t.type === 'recurring' && t.recurring_frequency && (
+          <div className="text-xs text-grey-400 mt-0.5 flex items-center gap-1">
+            <Repeat className="w-3 h-3" /> {t.recurring_frequency}
+          </div>
+        )}
+      </>
+    ),
+  },
+  { key: 'mainTask', label: 'Process', width: 150, value: (t) => t.main_task_name || '', cellClassName: 'text-grey-600 truncate' },
+  {
+    key: 'priority', label: 'Priority', width: 100, value: (t) => t.priority || '', format: humanize, order: PRIORITIES,
+    render: (t) => <Badge tone={t.priority}>{t.priority}</Badge>,
+  },
+  {
+    key: 'due', label: 'Due', width: 130, value: (t) => t.due_date || '',
+    render: (t, ctx) => (ctx.isReadOnly(t) ? <StaticDueDate task={t} /> : <DueDateCell task={t} onChanged={ctx.onChanged} />),
+  },
+  {
+    key: 'status', label: 'Status', width: 145, value: (t) => t.status || '', format: humanize, order: STATUS_SORT_ORDER,
+    render: (t, ctx) => (ctx.isReadOnly(t) ? <Badge tone={t.status}>{t.status}</Badge> : <StatusDropdown task={t} onChanged={ctx.onChanged} />),
+  },
+  {
+    // What this task needs from its viewer right now — nothing for a row they can't act on.
+    key: 'action', label: 'Action', width: 150, sortable: false, filterable: false, searchable: false,
+    value: (t) => actionRequired(t)?.label || '',
+    render: (t, ctx) => {
+      const action = ctx.isReadOnly(t) ? null : actionRequired(t);
+      if (!action) return <span className="text-grey-300">—</span>;
+      return (
+        <button
+          type="button"
+          onClick={() => ctx.openDetail(t)}
+          className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg press-scale transition-colors ${badgeClassFor(action.tone)}`}
+          title="Open task detail to act on this"
+        >
+          <AlertTriangle className="w-3 h-3" /> {action.label}
+        </button>
+      );
+    },
+  },
 ];
+const DEFAULT_TASK_SORT = { key: 'due', dir: 'asc' };
 const NO_ROWS = [];
 const today = getBusinessDate();
 const PAGE_SIZE = 25;
+const TASK_NOUN = ['task', 'tasks'];
 
 function csvEscape(v) {
   return `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -56,20 +130,6 @@ function actionRequired(t) {
   }
   if (t.delay_days > 0) return { label: `${t.delay_days}d overdue`, tone: 'support_required' };
   return null;
-}
-
-/** Ascending comparator for the sortable columns — a small fixed set (not user-defined key paths), so a
- *  plain switch is clearer than a generic accessor-function table nobody would reuse elsewhere. */
-function compareTasks(a, b, sortBy) {
-  switch (sortBy) {
-    case 'code': return (a.seq || 0) - (b.seq || 0);
-    case 'task': return (a.description || '').localeCompare(b.description || '');
-    case 'employee': return (a.employee_name || '').localeCompare(b.employee_name || '');
-    case 'due': return (a.due_date || '').localeCompare(b.due_date || '');
-    case 'priority': return PRIORITIES.indexOf(a.priority) - PRIORITIES.indexOf(b.priority);
-    case 'status': return (a.status || '').localeCompare(b.status || '');
-    default: return 0;
-  }
 }
 
 /** A task with no named Task Type (older imports) falls back to the seeded default type's own name for its
@@ -106,37 +166,34 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
   const [showForm, setShowForm] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [notice, setNotice] = useState('');
-  const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState('');
   const [requestModal, setRequestModal] = useState(null); // { task, kind: 'support' | 'due_date_change' }
   const [detailTask, setDetailTask] = useState(null);
   const [editTask, setEditTask] = useState(null);
   const [loadError, setLoadError] = useState('');
-  const [sort, setSort] = useState({ by: 'due', dir: 'asc' });
-  const [page, setPage] = useState(1);
-  const columnFilters = useColumnFilters(tasks || NO_ROWS, FILTER_COLUMNS, { staleLabel: 'no open tasks' });
+  const isRowReadOnly = (t) => readOnly || !canActOn(t);
+  // Selection/bulk actions only ever apply to what's visibly on screen — "select all" is this page's
+  // actionable rows, and nothing hidden by a filter or search can be acted on (see useDataTable).
+  const table = useDataTable(tasks || NO_ROWS, TASK_COLUMNS, {
+    tableId: `tasks${fetchUrl.replace(/\W+/g, '-')}`,
+    staleLabel: 'no open tasks',
+    defaultSort: DEFAULT_TASK_SORT,
+    pageSize: PAGE_SIZE,
+    selectable: !readOnly,
+    isRowSelectable: (t) => !isRowReadOnly(t),
+  });
   const isAdminTier = ['admin', 'super_admin'].includes(user.role);
 
   function load(noticeText) {
     setLoadError('');
     api.get(`${fetchUrl}?date=${date}`).then((d) => {
       setTasks(d.tasks);
-      // Drop any selected id that no longer exists in the list (e.g. it was just completed elsewhere).
-      setSelectedIds((prev) => new Set([...prev].filter((id) => d.tasks.some((t) => t.id === id))));
     }).catch((e) => setLoadError(e.message || "Couldn't load tasks."));
     if (noticeText) {
       setNotice(noticeText);
       setTimeout(() => setNotice(''), 4000);
     }
-  }
-
-  function toggleSelect(id) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
   }
 
   // Attempts every selected item regardless of an earlier one failing, and always reloads afterward —
@@ -147,7 +204,7 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
     setBulkError('');
     const results = await Promise.allSettled(ids.map(action));
     const failed = results.filter((r) => r.status === 'rejected').length;
-    setSelectedIds(new Set());
+    table.clearSelection();
     setBulkBusy(false);
     if (failed > 0) {
       setBulkError(`${ids.length - failed} of ${ids.length} succeeded — ${failed} failed. The list below reflects what actually happened.`);
@@ -156,19 +213,19 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
   }
 
   function bulkComplete() {
-    const ids = [...selectedIds];
+    const ids = [...table.selectedIds];
     return runBulk(ids, (id) => api.post(`/scrum/commitments/${id}/resolve`, { status: 'completed' }), `Marked ${ids.length} task${ids.length === 1 ? '' : 's'} completed.`);
   }
 
   function bulkReschedule(newDate) {
-    const ids = [...selectedIds];
+    const ids = [...table.selectedIds];
     return runBulk(ids, (id) => api.post(`/scrum/commitments/${id}/carry-forward`, { new_due_date: newDate }), `Rescheduled ${ids.length} task${ids.length === 1 ? '' : 's'} to ${newDate}.`);
   }
 
   // Bulk delete is Super Admin only, same restriction as the per-row Delete button — the server enforces
   // this too, so this is purely about not showing a control that would just fail for anyone else.
   function bulkDelete() {
-    const ids = [...selectedIds];
+    const ids = [...table.selectedIds];
     return runBulk(ids, (id) => api.del(`/scrum/commitments/${id}`), `Deleted ${ids.length} task${ids.length === 1 ? '' : 's'}.`);
   }
 
@@ -183,32 +240,10 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
   }
 
   useEffect(() => { load(); }, [date, fetchUrl]);
-  // A filter/sort change can easily land past the end of a page that used to exist — back to page 1
-  // rather than showing an empty page the user has to notice and back out of themselves.
-  useEffect(() => { setPage(1); }, [columnFilters.filters, sort, tasks]);
-
-  const filteredTasks = columnFilters.filtered;
-  const sortedTasks = useMemo(() => {
-    const copy = [...filteredTasks];
-    copy.sort((a, b) => (sort.dir === 'asc' ? 1 : -1) * compareTasks(a, b, sort.by));
-    return copy;
-  }, [filteredTasks, sort]);
-  const pageCount = Math.max(1, Math.ceil(sortedTasks.length / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount);
-  const pagedTasks = useMemo(() => sortedTasks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE), [sortedTasks, currentPage]);
-  const isRowReadOnly = (t) => readOnly || !canActOn(t);
-  // Selection/bulk actions only ever apply to what's visibly on screen — selecting "all" shouldn't
-  // silently reach into pages the user isn't looking at.
-  const selectableTasks = useMemo(() => pagedTasks.filter((t) => !isRowReadOnly(t)), [pagedTasks, readOnly, canActOn]);
-
-  function toggleSort(by) {
-    setSort((s) => (s.by === by ? { by, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { by, dir: 'asc' }));
-  }
-
   function exportCsv() {
     const header = ['Task ID', 'Task', 'Employee', 'Type', 'Process', 'Activity', 'Priority', 'Due', 'Status'];
     const lines = [header.join(',')].concat(
-      sortedTasks.map((t) => [taskCode(t), t.description, t.employee_name, t.task_type_name || t.type, t.main_task_name || '', t.task_activity_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
+      table.rows.map((t) => [taskCode(t), t.description, t.employee_name, t.task_type_name || t.type, t.main_task_name || '', t.task_activity_name || '', t.priority, t.due_date, t.status].map(csvEscape).join(','))
     );
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -289,8 +324,6 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
 
       {detailTask && <TaskDetailDrawer task={detailTask} onChanged={load} canAct={!isRowReadOnly(detailTask)} onClose={() => setDetailTask(null)} />}
 
-      {columnFilters.popoverProps && <ColumnFilterPopover key={columnFilters.popoverProps.column.key} {...columnFilters.popoverProps} />}
-
       <ErrorBanner message={deleteError} />
       {notice && (
         <div className="flex items-center gap-2 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2 text-sm mb-3 animate-scale-in">
@@ -298,249 +331,76 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
         </div>
       )}
 
-      {tasks.length > 0 && (
-        <div className="flex flex-wrap items-center gap-4 mb-1">
-          <span className="text-xs text-grey-400">{filteredTasks.length} of {tasks.length} task{tasks.length === 1 ? '' : 's'}</span>
+      <ErrorBanner message={bulkError} />
+      <DataTableView
+        table={table}
+        itemNoun={TASK_NOUN}
+        searchPlaceholder="Search tasks…"
+        cellContext={{ isReadOnly: isRowReadOnly, onChanged: load, openDetail: setDetailTask }}
+        emptyTitle="No open tasks"
+        emptyBody={readOnly || !showCreate ? 'Nothing here right now.' : 'Create the first task using the button above, or check back — completed tasks move to History.'}
+        noMatchTitle="No tasks match these filters"
+        noMatchBody='Adjust a column filter or your search, or use "Clear filters" above.'
+        toolbarExtra={(
           <button onClick={exportCsv} className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-800 transition-colors">
             <Download className="w-3.5 h-3.5" /> Export to CSV
           </button>
-          {columnFilters.anyActive && (
-            <button onClick={columnFilters.clearAll} className="inline-flex items-center gap-1 text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors">
-              <XCircle className="w-3.5 h-3.5" /> Clear all filters
-            </button>
-          )}
-        </div>
-      )}
-
-      {!readOnly && selectedIds.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-2.5 mb-3 animate-scale-in">
-          <span className="text-sm font-semibold text-brand-800">{selectedIds.size} selected</span>
-          <Button size="sm" disabled={bulkBusy} onClick={bulkComplete}><Check className="w-3.5 h-3.5" /> Mark Completed</Button>
-          {quickPickDates().map(([label, dateVal]) => (
-            <Button key={label} size="sm" variant="secondary" disabled={bulkBusy} onClick={() => bulkReschedule(dateVal)}>
-              Reschedule → {label}
-            </Button>
-          ))}
-          {user.role === 'super_admin' && (
-            <DeleteButton
-              label={`Delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}`}
-              confirmLabel={`Permanently delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}? This can't be undone.`}
-              disabled={bulkBusy}
-              onConfirm={bulkDelete}
-            />
-          )}
-          <button onClick={() => setSelectedIds(new Set())} className="text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors ml-1">
-            Clear selection
-          </button>
-          {bulkBusy && <span className="text-xs text-grey-400">Working…</span>}
-        </div>
-      )}
-      <ErrorBanner message={bulkError} />
-
-      {tasks.length === 0 ? (
-        <EmptyState icon={<IllustrationEmptyList className="w-16 h-16 mx-auto" />} title="No open tasks">
-          {readOnly || !showCreate ? 'Nothing here right now.' : 'Create the first task using the button above, or check back — completed tasks move to History.'}
-        </EmptyState>
-      ) : (
-        <>
-        <div className="overflow-x-auto mt-3">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-grey-500 border-b border-grey-200">
-                {!readOnly && selectableTasks.length > 0 && (
-                  <th className="py-2 pr-2 w-8">
-                    <input
-                      type="checkbox"
-                      aria-label="Select all"
-                      checked={selectedIds.size === selectableTasks.length}
-                      onChange={() => setSelectedIds(selectedIds.size === selectableTasks.length ? new Set() : new Set(selectableTasks.map((t) => t.id)))}
-                      className="cursor-pointer"
-                    />
-                  </th>
-                )}
-                {FILTER_COLUMNS.map((col) => {
-                  const sorted = col.sortKey && sort.by === col.sortKey;
-                  const SortIcon = sorted ? (sort.dir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
-                  return (
-                    <th key={col.key} className="py-2 pr-4 whitespace-nowrap">
-                      <div className="inline-flex items-center gap-1">
-                        {col.sortKey ? (
-                          <button type="button" onClick={() => toggleSort(col.sortKey)} title={`Sort by ${col.label}`} className="inline-flex items-center gap-1 hover:text-grey-800 transition-colors press-scale">
-                            {col.label} <SortIcon className={`w-3 h-3 ${sorted ? 'text-brand-600' : 'text-grey-300'}`} />
-                          </button>
-                        ) : col.label}
-                        <FilterFunnel
-                          label={col.label}
-                          active={columnFilters.isFiltered(col.key)}
-                          open={columnFilters.isOpen(col.key)}
-                          onToggle={(el) => columnFilters.toggleFilter(col.key, el)}
-                        />
-                      </div>
-                    </th>
-                  );
-                })}
-                <th className="py-2 pr-4">Action</th>
-                <th className="py-2 pr-4"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagedTasks.map((t, i) => {
-                const rowReadOnly = isRowReadOnly(t);
-                const isOwnTask = t.employee_id === user.id;
-                const canRequest = isOwnTask && !readOnly && t.status !== 'completed';
-                const action = isRowReadOnly(t) ? null : actionRequired(t);
-                return (
-                <tr key={t.id} className="border-b border-grey-100 hover:bg-grey-50 transition-colors animate-fade-in-up" style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}>
-                  {!readOnly && selectableTasks.length > 0 && (
-                    <td className="py-2.5 pr-2">
-                      {!rowReadOnly && (
-                        <input type="checkbox" checked={selectedIds.has(t.id)} onChange={() => toggleSelect(t.id)} className="cursor-pointer" aria-label={`Select ${t.description}`} />
-                      )}
-                    </td>
-                  )}
-                  <td className="py-2.5 pr-4">
-                    <button
-                      type="button"
-                      onClick={() => setDetailTask(t)}
-                      className="font-mono text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 px-1.5 py-0.5 rounded-md border border-brand-100 transition-colors press-scale"
-                      title="View task detail"
-                    >
-                      {taskCode(t)}
-                    </button>
-                  </td>
-                  <td className="py-2.5 pr-4 font-semibold text-grey-800 max-w-[280px]">
-                    {t.description}
-                    {t.status === 'support_required' && (t.non_completion_reason || t.non_completion_explanation) && (
-                      <div className="flex items-start gap-1 mt-1 text-xs font-normal text-accent-700 bg-accent-50 rounded-lg px-2 py-1">
-                        <MessageSquareText className="w-3 h-3 mt-0.5 shrink-0" />
-                        <span>
-                          {t.non_completion_reason && <strong>{t.non_completion_reason}</strong>}
-                          {t.non_completion_reason && t.non_completion_explanation && ' — '}
-                          {t.non_completion_explanation}
-                        </span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-2.5 pr-4 text-grey-600">{t.employee_name}</td>
-                  <td className="py-2.5 pr-4">
-                    <Badge tone={t.type}>{typeLabel(t)}</Badge>
-                    {t.type === 'recurring' && t.recurring_frequency && (
-                      <div className="text-xs text-grey-400 mt-0.5 flex items-center gap-1">
-                        <Repeat className="w-3 h-3" /> {t.recurring_frequency}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-2.5 pr-4 text-grey-600">{t.main_task_name || <span className="text-grey-300">—</span>}</td>
-                  <td className="py-2.5 pr-4"><Badge tone={t.priority}>{t.priority}</Badge></td>
-                  <td className="py-2.5 pr-4">
-                    {rowReadOnly ? (
-                      <StaticDueDate task={t} />
-                    ) : (
-                      <DueDateCell task={t} onChanged={load} />
-                    )}
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    {rowReadOnly ? <Badge tone={t.status}>{t.status}</Badge> : <StatusDropdown task={t} onChanged={load} />}
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    {action ? (
-                      <button
-                        type="button"
-                        onClick={() => setDetailTask(t)}
-                        className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg press-scale transition-colors ${badgeClassFor(action.tone)}`}
-                        title="Open task detail to act on this"
-                      >
-                        <AlertTriangle className="w-3 h-3" /> {action.label}
-                      </button>
-                    ) : <span className="text-grey-300">—</span>}
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        title="View task detail"
-                        onClick={() => setDetailTask(t)}
-                        className="text-grey-400 hover:text-brand-600 transition-colors press-scale"
-                      >
-                        <HistoryIcon className="w-4 h-4" />
-                      </button>
-                      {isAdminTier && (
-                        <button
-                          type="button"
-                          title="Edit task"
-                          onClick={() => setEditTask(t)}
-                          className="text-grey-400 hover:text-brand-600 transition-colors press-scale"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                      )}
-                      {canRequest && (
-                        <>
-                          <button
-                            type="button"
-                            title="Request support"
-                            onClick={() => setRequestModal({ task: t, kind: 'support' })}
-                            className="text-grey-400 hover:text-accent-600 transition-colors press-scale"
-                          >
-                            <LifeBuoy className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            title="Request a due-date change"
-                            onClick={() => setRequestModal({ task: t, kind: 'due_date_change' })}
-                            className="text-grey-400 hover:text-brand-600 transition-colors press-scale"
-                          >
-                            <CalendarClock className="w-4 h-4" />
-                          </button>
-                        </>
-                      )}
-                      {!rowReadOnly && (
-                        <DeleteButton
-                          confirmLabel={`Delete "${t.description}"? This can't be undone.`}
-                          disabled={user.role === 'super_admin' ? false : (t.created_by !== user.id || !['leader', 'admin'].includes(user.role))}
-                          onConfirm={() => remove(t)}
-                        />
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );})}
-            </tbody>
-          </table>
-          {pageCount > 1 && (
-            <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-grey-100">
-              <span className="text-xs text-grey-400">
-                Page {currentPage} of {pageCount} — {sortedTasks.length} task{sortedTasks.length === 1 ? '' : 's'}
-              </span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={currentPage <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="w-7 h-7 rounded-lg flex items-center justify-center text-grey-500 hover:bg-grey-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors press-scale"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  disabled={currentPage >= pageCount}
-                  onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-                  className="w-7 h-7 rounded-lg flex items-center justify-center text-grey-500 hover:bg-grey-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors press-scale"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-        {/* Outside the horizontal scroller, so it stays on screen even when the table is scrolled sideways. */}
-        {filteredTasks.length === 0 && (
-          <EmptyState icon={<IllustrationSearch className="w-16 h-16 mx-auto" />} title="No tasks match these filters">
-            Adjust a column filter, or use "Clear all filters" above.
-          </EmptyState>
         )}
-        </>
-      )}
+        bulkActions={({ selectedIds }) => (
+          <>
+            <Button size="sm" disabled={bulkBusy} onClick={bulkComplete}><Check className="w-3.5 h-3.5" /> Mark Completed</Button>
+            {quickPickDates().map(([label, dateVal]) => (
+              <Button key={label} size="sm" variant="secondary" disabled={bulkBusy} onClick={() => bulkReschedule(dateVal)}>
+                Reschedule → {label}
+              </Button>
+            ))}
+            {user.role === 'super_admin' && (
+              <DeleteButton
+                label={`Delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}`}
+                confirmLabel={`Permanently delete ${selectedIds.size} task${selectedIds.size === 1 ? '' : 's'}? This can't be undone.`}
+                disabled={bulkBusy}
+                onConfirm={bulkDelete}
+              />
+            )}
+            {bulkBusy && <span className="text-xs text-grey-400">Working…</span>}
+          </>
+        )}
+        rowActionsLabel=""
+        rowActionsWidth={130}
+        renderRowActions={(t) => {
+          const isOwnTask = t.employee_id === user.id;
+          const canRequest = isOwnTask && !readOnly && t.status !== 'completed';
+          return (
+            <div className="flex items-center gap-2">
+              <button type="button" title="View task detail" onClick={() => setDetailTask(t)} className="text-grey-400 hover:text-brand-600 transition-colors press-scale">
+                <HistoryIcon className="w-4 h-4" />
+              </button>
+              {isAdminTier && (
+                <button type="button" title="Edit task" onClick={() => setEditTask(t)} className="text-grey-400 hover:text-brand-600 transition-colors press-scale">
+                  <Pencil className="w-4 h-4" />
+                </button>
+              )}
+              {canRequest && (
+                <>
+                  <button type="button" title="Request support" onClick={() => setRequestModal({ task: t, kind: 'support' })} className="text-grey-400 hover:text-accent-600 transition-colors press-scale">
+                    <LifeBuoy className="w-4 h-4" />
+                  </button>
+                  <button type="button" title="Request a due-date change" onClick={() => setRequestModal({ task: t, kind: 'due_date_change' })} className="text-grey-400 hover:text-brand-600 transition-colors press-scale">
+                    <CalendarClock className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+              {!isRowReadOnly(t) && (
+                <DeleteButton
+                  confirmLabel={`Delete "${t.description}"? This can't be undone.`}
+                  disabled={user.role === 'super_admin' ? false : (t.created_by !== user.id || !['leader', 'admin'].includes(user.role))}
+                  onConfirm={() => remove(t)}
+                />
+              )}
+            </div>
+          );
+        }}
+      />
       {editTask && isAdminTier && (
         <EditTaskModal task={editTask} onClose={() => setEditTask(null)} onSaved={(msg) => { setEditTask(null); load(msg); }} />
       )}

@@ -15,7 +15,14 @@ import { useColumnFilters } from './useColumnFilters';
  * (can't be hidden), cellClassName? (td classes).
  *
  * Filtering reuses lib/useColumnFilters as-is — this hook only adds the layout (visible columns, order,
- * width — persisted per `tableId`) and the sort/search layer on top of what it already returns. */
+ * width — persisted per `tableId`) and the sort/search layer on top of what it already returns.
+ *
+ * Optional: `defaultSort` ({ key, dir }), `pageSize` (0 = no paging), and `selectable` with
+ * `isRowSelectable(row)` / `getRowId(row)` for row checkboxes. The selection only ever holds rows that are
+ * selectable AND still shown by the current filters/search — a bulk action can't reach a row the user
+ * can't see — and "select all" means the selectable rows on the current page. */
+
+const defaultRowId = (r) => r.id;
 
 const PREFS_PREFIX = 'dsm_datatable_';
 
@@ -72,7 +79,10 @@ function compareRows(a, b, column) {
   return String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' });
 }
 
-export function useDataTable(rows, columns, { tableId, staleLabel, searchPlaceholderColumns, loading = false } = {}) {
+export function useDataTable(rows, columns, {
+  tableId, staleLabel, searchPlaceholderColumns, loading = false,
+  defaultSort = null, pageSize = 0, selectable = false, isRowSelectable, getRowId = defaultRowId,
+} = {}) {
   const [prefs, setPrefs] = useState(() => {
     const saved = loadPrefs(tableId);
     return saved ? reconcilePrefs(saved, columns) : defaultPrefs(columns);
@@ -90,7 +100,7 @@ export function useDataTable(rows, columns, { tableId, staleLabel, searchPlaceho
   }, [columnKeys]);
   useEffect(() => { savePrefs(tableId, prefs); }, [tableId, prefs]);
 
-  const [sort, setSort] = useState(null); // { key, dir: 'asc' | 'desc' }
+  const [sort, setSort] = useState(defaultSort); // { key, dir: 'asc' | 'desc' } | null
   const [search, setSearch] = useState('');
 
   const columnByKey = useMemo(() => Object.fromEntries(columns.map((c) => [c.key, c])), [columns]);
@@ -121,6 +131,45 @@ export function useDataTable(rows, columns, { tableId, staleLabel, searchPlaceho
     copy.sort((a, b) => (sort.dir === 'asc' ? 1 : -1) * compareRows(a, b, col));
     return copy;
   }, [searched, sort, columnByKey]);
+
+  // Paging: any change to filters, search or sort starts back at page 1 (derived here rather than reset in an
+  // effect), and a page past the end — e.g. after rows were completed away — clamps to the last one.
+  const [pageState, setPageState] = useState({ n: 1, filters: null, search: '', sort: null });
+  const pageStale = pageState.filters !== columnFilters.filters || pageState.search !== search || pageState.sort !== sort;
+  const pageCount = pageSize > 0 ? Math.max(1, Math.ceil(sortedRows.length / pageSize)) : 1;
+  const page = Math.min(pageStale ? 1 : pageState.n, pageCount);
+  const pagedRows = useMemo(
+    () => (pageSize > 0 ? sortedRows.slice((page - 1) * pageSize, page * pageSize) : sortedRows),
+    [sortedRows, page, pageSize]
+  );
+  function setPage(n) {
+    setPageState({ n: Math.max(1, Math.min(n, pageCount)), filters: columnFilters.filters, search, sort });
+  }
+
+  const [selectedRaw, setSelectedRaw] = useState(() => new Set());
+  const canSelect = (r) => selectable && (!isRowSelectable || isRowSelectable(r));
+  const selectedRows = selectable ? sortedRows.filter((r) => selectedRaw.has(getRowId(r)) && canSelect(r)) : [];
+  const selectedIds = new Set(selectedRows.map(getRowId));
+  const selectableOnPage = selectable ? pagedRows.filter(canSelect) : [];
+  const pageAllSelected = selectableOnPage.length > 0 && selectableOnPage.every((r) => selectedIds.has(getRowId(r)));
+  const pageSomeSelected = selectableOnPage.some((r) => selectedIds.has(getRowId(r)));
+
+  function toggleRow(row) {
+    const id = getRowId(row);
+    setSelectedRaw(() => {
+      const next = new Set(selectedIds);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function togglePage() {
+    setSelectedRaw(() => {
+      const next = new Set(selectedIds);
+      selectableOnPage.forEach((r) => (pageAllSelected ? next.delete(getRowId(r)) : next.add(getRowId(r))));
+      return next;
+    });
+  }
+  function clearSelection() { setSelectedRaw(new Set()); }
 
   function toggleSort(key) {
     // asc -> desc -> unsorted, so "Reset columns" has a real unsorted state to return to.
@@ -173,7 +222,7 @@ export function useDataTable(rows, columns, { tableId, staleLabel, searchPlaceho
 
   function resetColumns() {
     setPrefs(defaultPrefs(columns));
-    setSort(null);
+    setSort(defaultSort);
   }
 
   function clearFilters() {
@@ -199,8 +248,23 @@ export function useDataTable(rows, columns, { tableId, staleLabel, searchPlaceho
     search,
     setSearch,
     rows: sortedRows,
+    pagedRows,
     totalCount: rows.length,
     matchedCount: sortedRows.length,
+    pageSize,
+    page,
+    pageCount,
+    setPage,
+    selectionEnabled: selectable,
+    canSelect,
+    selectedIds,
+    selectedRows,
+    selectableOnPage,
+    pageAllSelected,
+    pageSomeSelected,
+    toggleRow,
+    togglePage,
+    clearSelection,
     clearFilters,
     anyFilterActive: columnFilters.anyActive || search.trim() !== '',
     isColumnFiltered: columnFilters.isFiltered,
