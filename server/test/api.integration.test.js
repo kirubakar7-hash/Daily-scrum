@@ -1570,6 +1570,8 @@ test('recurring list — every series carries its parsed schedule, including old
   const legacy = rows.find((r) => r.id === legacyId);
   assert.deepEqual(legacy.rule.weekdays, [1, 2, 3, 4, 5]);
   assert.ok(rows.every((r) => r.rule && r.rule.unit), 'every row has a usable rule for the Edit form');
+  assert.equal(legacy.task_count, 0, 'the Delete confirmation can say how many tasks will be kept');
+  assert.ok(rows.every((r) => Number.isInteger(r.task_count)));
 });
 
 // The completion-triggered path (an employee marking today's occurrence done, via POST .../resolve) is a

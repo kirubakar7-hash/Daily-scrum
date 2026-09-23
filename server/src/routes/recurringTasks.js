@@ -15,7 +15,8 @@ router.use(requireRole('super_admin', 'admin'));
  *  per employee it's assigned to (the data model ties each recurring activity to one employee). */
 router.get('/', asyncHandler(async (req, res) => {
   const rows = await db.prepare(`
-    SELECT ra.*, u.full_name AS employee_name, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name
+    SELECT ra.*, u.full_name AS employee_name,
+      (SELECT COUNT(*) FROM commitments c WHERE c.recurring_activity_id = ra.id)::int AS task_count, tt.name AS task_type_name, cat.name AS category_name, mt.name AS main_task_name, ta.name AS task_activity_name
     FROM recurring_activities ra
     JOIN users u ON u.id = ra.employee_id
     LEFT JOIN task_types tt ON tt.id = ra.task_type_id

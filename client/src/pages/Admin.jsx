@@ -1124,6 +1124,45 @@ function EditRecurringModal({ item, onClose, onSaved, mainTasks, taskActivities,
   );
 }
 
+/** Confirms deleting one person's recurring task, spelling out what happens to the tasks it already made. */
+function DeleteRecurringModal({ item, onClose, onDeleted }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const count = item.task_count || 0;
+
+  async function confirm() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.del(`/recurring-tasks/${item.id}`);
+      onDeleted();
+    } catch (e) {
+      setError(e.message || "Couldn't delete this recurring task.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Delete Recurring Task?">
+      <p className="text-sm text-grey-700">
+        <span className="font-semibold">{item.title}</span>{item.employee_name ? <> for <span className="font-semibold">{item.employee_name}</span></> : null} will
+        stop repeating — no new tasks will be created from it. This can't be undone.
+      </p>
+      <p className="text-sm text-grey-500 mt-2">
+        {count === 0
+          ? 'It has no tasks yet, so nothing else changes.'
+          : `The ${count} task${count === 1 ? '' : 's'} it already created stay${count === 1 ? 's' : ''} in Team Tasks and History. Delete an open one there if it's no longer needed.`}
+      </p>
+      <p className="text-xs text-grey-400 mt-2">To stop it only for a while, use Pause instead.</p>
+      <ErrorBanner message={error} />
+      <div className="flex justify-end gap-2 mt-4">
+        <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="danger" onClick={confirm} disabled={busy}>{busy ? 'Deleting…' : 'Delete'}</Button>
+      </div>
+    </Modal>
+  );
+}
+
 function RecurringTasksTab() {
   const [items, setItems] = useState(null);
   const [types, setTypes] = useState([]);
@@ -1145,6 +1184,7 @@ function RecurringTasksTab() {
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
 
   const recurringTypes = types.filter((t) => t.mechanic === 'recurring' && t.is_active);
 
@@ -1216,12 +1256,6 @@ function RecurringTasksTab() {
     } finally {
       setSaving(false);
     }
-  }
-
-  // Throws on failure so the row's Delete control shows the error right where it was clicked.
-  async function removeSeries(item) {
-    await api.del(`/recurring-tasks/${item.id}`);
-    load();
   }
 
   async function togglePause(item) {
@@ -1332,14 +1366,16 @@ function RecurringTasksTab() {
             <RowControls
               toggleLabel={r.is_active ? 'Pause' : 'Resume'}
               onToggle={() => togglePause(r)}
-              confirmLabel="Delete? Tasks already created are kept."
-              onDelete={() => removeSeries(r)}
             >
               <button type="button" className={LINK_BUTTON} onClick={() => setEditing(r)}>Edit</button>
+              <button type="button" className="text-xs font-medium text-accent-600 hover:text-accent-800 transition-colors" onClick={() => setDeleting(r)}>Delete</button>
             </RowControls>
           )}
         />
       </Card>
+      {deleting && (
+        <DeleteRecurringModal key={deleting.id} item={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setDeleting(null); load(); }} />
+      )}
       {editing && (
         <EditRecurringModal
           key={editing.id}
