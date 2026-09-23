@@ -1425,6 +1425,100 @@ test('recurring API — a recurring task made from Team Tasks also starts on its
   assert.equal(commitment.due_date, '2026-09-28', 'a Wednesday due date becomes the next Monday');
 });
 
+test('recurring edit — changes apply from the next task on; the task already on someone\'s list keeps its details', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const { activityId, commitmentId: existingId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(1) });
+
+  const res = await fetch(`${baseUrl}/api/recurring-tasks/${activityId}`, {
+    method: 'PATCH', headers: authed(adminLogin.token),
+    body: JSON.stringify({ title: 'Edited recurring name', priority: 'High', reviewer_id: ids.midLeaderAId, employee_id: ids.reportBId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId }),
+  });
+  assert.equal(res.status, 200);
+  const { recurring_task: series } = await res.json();
+  assert.equal(series.title, 'Edited recurring name');
+  assert.equal(series.employee_id, ids.reportBId);
+
+  const existing = await db.prepare('SELECT * FROM commitments WHERE id = ?').get(existingId);
+  assert.equal(existing.description, 'Daily status update', 'the task already created is not rewritten');
+  assert.equal(existing.employee_id, ids.reportAId);
+
+  await generateDueOccurrences();
+  const next = await db.prepare('SELECT * FROM commitments WHERE recurring_activity_id = ? AND due_date = ?').get(activityId, today());
+  assert.ok(next, 'the series still generates today\'s task after an edit');
+  assert.equal(next.description, 'Edited recurring name');
+  assert.equal(next.employee_id, ids.reportBId, 'the next task goes to the newly assigned person');
+  assert.equal(next.priority, 'High');
+  assert.equal(next.reviewer_id, ids.midLeaderAId);
+  assert.equal(next.main_task_id, ids.fixtureMainTaskId);
+
+  const audit = await db.prepare(`SELECT field_name, old_value, new_value FROM audit_logs WHERE record_id = ? AND table_name = 'recurring_activities' ORDER BY field_name`).all(activityId);
+  const byField = Object.fromEntries(audit.map((a) => [a.field_name, a]));
+  assert.equal(byField.employee_id.old_value, 'Report A', 'the audit trail shows names, not IDs');
+  assert.equal(byField.employee_id.new_value, 'Report B');
+  assert.equal(byField.reviewer_id.new_value, 'Mid Leader A');
+  assert.equal(byField.title.new_value, 'Edited recurring name');
+  assert.ok(!byField.recurrence_rule, 'the schedule was not sent, so it is not touched');
+});
+
+test('recurring edit — a new schedule takes over from the most recent task', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const { activityId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(1) });
+  const yesterday = daysAgo(1);
+  const weekday = ((new Date(`${yesterday}T00:00:00Z`).getUTCDay() + 6) % 7) + 1; // ISO weekday of yesterday
+  const rule = { interval: 1, unit: 'week', weekdays: [weekday], end: { type: 'never' } };
+
+  const res = await fetch(`${baseUrl}/api/recurring-tasks/${activityId}`, { method: 'PATCH', headers: authed(adminLogin.token), body: JSON.stringify({ recurrence_rule: rule }) });
+  assert.equal(res.status, 200);
+  const { recurring_task: series } = await res.json();
+  assert.deepEqual(series.rule, rule);
+  assert.match(series.frequency, /^Weekly on /);
+
+  await generateDueOccurrences();
+  assert.equal((await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId)).c, 1,
+    'now weekly on yesterday\'s weekday, so the next one is a week after yesterday — nothing today');
+
+  const audit = await db.prepare(`SELECT old_value, new_value FROM audit_logs WHERE record_id = ? AND field_name = 'frequency'`).get(activityId);
+  assert.ok(audit && /^Weekly on /.test(audit.new_value), 'the schedule change is recorded by its readable label');
+});
+
+test('recurring edit — refuses bad input, name clashes and non-admins; Pause still works', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const { activityId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: today() });
+  const patch = (body, token = adminLogin.token) => fetch(`${baseUrl}/api/recurring-tasks/${activityId}`, { method: 'PATCH', headers: authed(token), body: JSON.stringify(body) });
+
+  assert.equal((await patch({ title: '   ' })).status, 400, 'empty name');
+  assert.equal((await patch({ priority: 'Urgent' })).status, 400);
+  assert.equal((await patch({ recurrence_rule: { interval: 12, unit: 'month', month: 4, day_of_month: 31, end: { type: 'never' } } })).status, 400, '31 April');
+  assert.equal((await patch({ employee_id: uuid() })).status, 400, 'unknown person');
+  const adhocType = await db.prepare(`SELECT id FROM task_types WHERE mechanic = 'adhoc' AND is_active = 1 LIMIT 1`).get();
+  assert.equal((await patch({ task_type_id: adhocType.id })).status, 400, 'an ad-hoc type would stop it repeating');
+
+  await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: today(), employeeId: ids.reportBId });
+  await db.prepare(`UPDATE recurring_activities SET title = 'Taken name' WHERE id = (SELECT id FROM recurring_activities WHERE employee_id = ? ORDER BY created_at DESC LIMIT 1)`).run(ids.reportBId);
+  const clash = await patch({ title: 'Taken name', employee_id: ids.reportBId });
+  assert.equal(clash.status, 400, 'the same person cannot have two recurring tasks with one name');
+
+  const { body: leaderLogin } = await login('midleadera@test.local', 'MidLeadA123');
+  assert.equal((await patch({ title: 'Leader rename' }, leaderLogin.token)).status, 403, 'only Admins manage recurring tasks');
+
+  const unchanged = await db.prepare('SELECT title, is_active FROM recurring_activities WHERE id = ?').get(activityId);
+  assert.equal(unchanged.title, 'Daily status update', 'nothing refused was saved');
+
+  assert.equal((await patch({ is_active: 0 })).status, 200);
+  assert.equal((await db.prepare('SELECT is_active FROM recurring_activities WHERE id = ?').get(activityId)).is_active, 0, 'Pause via the same endpoint still works');
+});
+
+test('recurring list — every series carries its parsed schedule, including old ones that only have a label', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const legacyId = uuid();
+  await db.prepare(`INSERT INTO recurring_activities (id, employee_id, title, frequency, series_start_date, created_by) VALUES (?, ?, 'Legacy weekday task', 'Weekdays', ?, ?)`)
+    .run(legacyId, ids.reportAId, today(), ids.superAdminId);
+  const { recurring_tasks: rows } = await (await fetch(`${baseUrl}/api/recurring-tasks`, { headers: authed(adminLogin.token) })).json();
+  const legacy = rows.find((r) => r.id === legacyId);
+  assert.deepEqual(legacy.rule.weekdays, [1, 2, 3, 4, 5]);
+  assert.ok(rows.every((r) => r.rule && r.rule.unit), 'every row has a usable rule for the Edit form');
+});
+
 // The completion-triggered path (an employee marking today's occurrence done, via POST .../resolve) is a
 // second way a recurring series advances, alongside the schedule-triggered sweep tested above — it had no
 // integration test at all before this.

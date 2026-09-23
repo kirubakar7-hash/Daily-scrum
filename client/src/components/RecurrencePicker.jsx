@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Check } from 'lucide-react';
 import { Input, Select } from './ui';
 
@@ -84,6 +84,7 @@ export default function RecurrencePicker({ value, onChange, startDate }) {
   // day) would snap straight back to it before the user could change anything.
   const [customMode, setCustomMode] = useState(() => presetOf(rule) === 'custom');
   const preset = customMode ? 'custom' : presetOf(rule);
+  const endGroup = useId(); // unique radio-group name, in case two pickers are ever on screen at once
 
   function update(patch) {
     onChange({ ...rule, ...patch });
@@ -220,18 +221,18 @@ export default function RecurrencePicker({ value, onChange, startDate }) {
         <span className="block text-xs font-medium text-grey-500 mb-1.5">Ends</span>
         <div className="space-y-2">
           <label className="flex items-center gap-2 text-sm text-grey-700 cursor-pointer">
-            <input type="radio" name="rp-end" checked={end.type === 'never'} onChange={() => updateEnd({ type: 'never' })} className="accent-[#16469D]" />
+            <input type="radio" name={endGroup} checked={end.type === 'never'} onChange={() => updateEnd({ type: 'never' })} className="accent-[#16469D]" />
             Never
           </label>
           <label className="flex items-center gap-2 text-sm text-grey-700 cursor-pointer flex-wrap">
-            <input type="radio" name="rp-end" checked={end.type === 'on_date'} onChange={() => updateEnd({ type: 'on_date' })} className="accent-[#16469D]" />
+            <input type="radio" name={endGroup} checked={end.type === 'on_date'} onChange={() => updateEnd({ type: 'on_date' })} className="accent-[#16469D]" />
             On date
             {end.type === 'on_date' && (
               <Input type="date" value={end.date || ''} onChange={(e) => updateEnd({ type: 'on_date', date: e.target.value })} className="w-auto" />
             )}
           </label>
           <label className="flex items-center gap-2 text-sm text-grey-700 cursor-pointer flex-wrap">
-            <input type="radio" name="rp-end" checked={end.type === 'after_count'} onChange={() => updateEnd({ type: 'after_count', count: end.count || 10 })} className="accent-[#16469D]" />
+            <input type="radio" name={endGroup} checked={end.type === 'after_count'} onChange={() => updateEnd({ type: 'after_count', count: end.count || 10 })} className="accent-[#16469D]" />
             After
             {end.type === 'after_count' && (
               <input

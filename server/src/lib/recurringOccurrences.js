@@ -16,7 +16,23 @@ import { recordAudit } from './audit.js';
  *  due_unique (001_schema.sql) is the real guarantee against a duplicate row, not the pre-checks — a
  *  unique-violation here means someone else just won that race, so this returns their row instead of
  *  erroring or silently creating a second one. */
-export async function insertOccurrence({ activity, dueDate, template, changedBy, changedByName, reason }) {
+export async function insertOccurrence({ activity, dueDate, template: previous, changedBy, changedByName, reason }) {
+  // The series row is the source of truth for what Admin → Recurring Tasks → Edit can change: who it's
+  // for, its name, priority and reviewer always come from there, so an edit shows up from the next task
+  // on. Type/Function/Process/Activity also come from the series when it has them — older series that
+  // predate those columns fall back to whatever the previous task carried. The other per-task details
+  // (expected outcome, effort, dependency) still carry forward from the previous task, as before.
+  const template = {
+    ...previous,
+    employee_id: activity.employee_id || previous.employee_id,
+    description: activity.title || previous.description,
+    priority: activity.priority || previous.priority,
+    reviewer_id: activity.reviewer_id !== undefined ? activity.reviewer_id : previous.reviewer_id,
+    task_type_id: activity.task_type_id || previous.task_type_id,
+    category_id: activity.category_id || previous.category_id,
+    main_task_id: activity.main_task_id || previous.main_task_id,
+    task_activity_id: activity.task_activity_id || previous.task_activity_id,
+  };
   const newId = uuid();
   try {
     await db.transaction(async () => {

@@ -16,6 +16,7 @@ const FIELD_LABELS = {
   dependency_owner: 'Waiting on', remarks: 'Remarks', expected_outcome: 'Expected outcome', mechanic: 'Behaviour',
   team_id: 'Team', department_id: 'Department', leader_user_id: 'Team leader',
   category_id: 'Function', main_task_id: 'Process', task_activity_id: 'Activity', reviewer_id: 'Reviewer',
+  title: 'Name', employee_id: 'Assigned to', task_type_id: 'Type', frequency: 'Repeats',
 };
 
 // These fields store internal IDs, not anything a person would recognize — never show the raw value.

@@ -1032,6 +1032,98 @@ function TaskTypesTab() {
 }
 
 /* ---------------- Recurring Tasks (master checklist) ---------------- */
+/** Edit one person's recurring task. Only fields that actually changed are sent, so opening and saving an
+ *  older series doesn't rewrite its schedule label. Changes shape every task generated from now on; tasks
+ *  already on someone's list keep their details (the server's PATCH /recurring-tasks/:id explains why). */
+function EditRecurringModal({ item, onClose, onSaved, mainTasks, taskActivities, recurringTypes, employees, reviewers }) {
+  const [title, setTitle] = useState(item.title || '');
+  const [employeeId, setEmployeeId] = useState(item.employee_id || '');
+  const [mainTaskId, setMainTaskId] = useState(item.main_task_id || '');
+  const [taskActivityId, setTaskActivityId] = useState(item.task_activity_id || '');
+  const [taskTypeId, setTaskTypeId] = useState(item.task_type_id || '');
+  const [priority, setPriority] = useState(item.priority || 'Medium');
+  const [reviewerId, setReviewerId] = useState(item.reviewer_id || '');
+  const [rule, setRule] = useState(item.rule || DEFAULT_RULE);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
+  // Someone who has since been deactivated still shows as the current assignee rather than a blank choice.
+  const assignees = employees.some((e) => e.id === item.employee_id)
+    ? employees
+    : [{ id: item.employee_id, full_name: `${item.employee_name || 'Unknown'} (inactive)` }, ...employees];
+
+  function chooseMainTask(id) {
+    setMainTaskId(id);
+    if (!taskActivities.some((a) => a.id === taskActivityId && a.main_task_id === id)) setTaskActivityId('');
+  }
+
+  async function save() {
+    setError('');
+    if (!title.trim()) return setError('Please describe the recurring task.');
+    if (!mainTaskId) return setError('Choose the Process this task belongs to.');
+    if (!taskActivityId) return setError('Choose the Activity this task belongs to.');
+    const next = {
+      title: title.trim(), employee_id: employeeId, main_task_id: mainTaskId, task_activity_id: taskActivityId,
+      task_type_id: taskTypeId, priority, reviewer_id: reviewerId || null,
+    };
+    const changes = Object.fromEntries(Object.entries(next).filter(([k, v]) => (v || null) !== (item[k] || null)));
+    if (JSON.stringify(rule) !== JSON.stringify(item.rule)) changes.recurrence_rule = rule;
+    if (Object.keys(changes).length === 0) return onClose();
+    setSaving(true);
+    try {
+      await api.patch(`/recurring-tasks/${item.id}`, changes);
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Edit Recurring Task" wide>
+      <p className="text-xs text-grey-400 mb-3">
+        Changes apply from the next task onward. Tasks already on {item.employee_name ? `${item.employee_name}'s` : 'their'} list keep their
+        current details — change those in Team Tasks. A new schedule carries on from the most recent task.
+      </p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+        <Select label="Process" value={mainTaskId} onChange={(e) => chooseMainTask(e.target.value)}>
+          <option value="">Choose a Process…</option>
+          {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </Select>
+        <Select label="Activity" value={taskActivityId} onChange={(e) => setTaskActivityId(e.target.value)}>
+          <option value="">Choose an Activity…</option>
+          {activitiesForMainTask.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </Select>
+        <Input label="What is the SPECIFIC task?" value={title} onChange={(e) => setTitle(e.target.value)} />
+        <Select label="Type" value={taskTypeId} onChange={(e) => setTaskTypeId(e.target.value)}>
+          {!taskTypeId && <option value="">No type</option>}
+          {recurringTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </Select>
+        <Select label="Assigned to" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+          {assignees.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+        </Select>
+        <Select label="Priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
+          {['Low', 'Medium', 'High'].map((p) => <option key={p} value={p}>{p}</option>)}
+        </Select>
+        <Select label="Reviewer" value={reviewerId} onChange={(e) => setReviewerId(e.target.value)}>
+          <option value="">No reviewer</option>
+          {reviewers.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
+        </Select>
+      </div>
+      <div className="mb-3">
+        <span className="block text-sm font-medium text-grey-700 mb-1.5">How often?</span>
+        <RecurrencePicker value={rule} onChange={setRule} startDate={item.series_start_date} />
+      </div>
+      <ErrorBanner message={error} />
+      <div className="flex justify-end gap-2 mt-3">
+        <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+        <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : <><Check className="w-4 h-4" /> Save Changes</>}</Button>
+      </div>
+    </Modal>
+  );
+}
+
 function RecurringTasksTab() {
   const [items, setItems] = useState(null);
   const [types, setTypes] = useState([]);
@@ -1052,6 +1144,7 @@ function RecurringTasksTab() {
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const recurringTypes = types.filter((t) => t.mechanic === 'recurring' && t.is_active);
 
@@ -1228,10 +1321,27 @@ function RecurringTasksTab() {
           emptyTitle="Nothing created yet"
           emptyBody="Build one above."
           rowActionsLabel=""
-          rowActionsWidth={100}
-          renderRowActions={(r) => <RowControls toggleLabel={r.is_active ? 'Pause' : 'Resume'} onToggle={() => togglePause(r)} />}
+          rowActionsWidth={120}
+          renderRowActions={(r) => (
+            <RowControls toggleLabel={r.is_active ? 'Pause' : 'Resume'} onToggle={() => togglePause(r)}>
+              <button type="button" className={LINK_BUTTON} onClick={() => setEditing(r)}>Edit</button>
+            </RowControls>
+          )}
         />
       </Card>
+      {editing && (
+        <EditRecurringModal
+          key={editing.id}
+          item={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+          mainTasks={mainTasks}
+          taskActivities={taskActivities}
+          recurringTypes={recurringTypes}
+          employees={employees}
+          reviewers={reviewers}
+        />
+      )}
     </div>
   );
 }

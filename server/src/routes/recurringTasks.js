@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { db, today } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { recordAudit } from '../lib/audit.js';
-import { describeRule, validateRule, legacyFrequencyToRule, firstDueDate } from '../lib/recurrence.js';
+import { describeRule, validateRule, legacyFrequencyToRule, firstDueDate, parseRule } from '../lib/recurrence.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { resolveDefaultCategoryId } from '../lib/masterData.js';
 
@@ -24,7 +24,9 @@ router.get('/', asyncHandler(async (req, res) => {
     LEFT JOIN task_activities ta ON ta.id = ra.task_activity_id
     ORDER BY ra.is_active DESC, ra.title, u.full_name
   `).all();
-  res.json({ recurring_tasks: rows });
+  // `rule` is the parsed schedule (older series only have a frequency label) so the Edit form can show the
+  // current schedule without re-implementing the legacy mapping in the browser.
+  res.json({ recurring_tasks: rows.map((r) => ({ ...r, rule: parseRule(r) })) });
 }));
 
 /** Shared by the single-create route and the bulk CSV import below — builds one recurring task and
@@ -221,19 +223,94 @@ router.post('/import', asyncHandler(async (req, res) => {
   res.json({ results });
 }));
 
-/** PATCH /api/recurring-tasks/:id — pause or resume one person's assignment. Pausing only stops future
- *  occurrences from being generated; nothing already created is touched. */
+/** PATCH /api/recurring-tasks/:id — edit one person's recurring task (Admin → Recurring Tasks → Edit), or
+ *  pause/resume it. Only the fields sent are changed. An edit shapes every task generated from now on —
+ *  the series row is what the scheduler copies from (see insertOccurrence) — while tasks already on
+ *  someone's list keep their details, exactly like pausing leaves already-created tasks alone. A changed
+ *  schedule takes over from the most recent task: its next date is worked out with the new rule. */
 router.patch('/:id', asyncHandler(async (req, res) => {
   const before = await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(req.params.id);
   if (!before) return res.status(404).json({ error: 'Recurring task not found.' });
-  const isActive = req.body?.is_active ? 1 : 0;
-  await db.prepare('UPDATE recurring_activities SET is_active = ? WHERE id = ?').run(isActive, req.params.id);
-  await recordAudit({
-    tableName: 'recurring_activities', recordId: req.params.id, fieldName: 'is_active',
-    oldValue: before.is_active, newValue: isActive, changedBy: req.user.id, changedByName: req.user.full_name,
-    ownerId: before.employee_id, ownerName: (await db.prepare('SELECT full_name FROM users WHERE id = ?').get(before.employee_id))?.full_name || null,
-  });
-  res.json({ recurring_task: await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(req.params.id) });
+  const b = req.body || {};
+  const has = (key) => Object.prototype.hasOwnProperty.call(b, key);
+  const bad = (error) => res.status(400).json({ error });
+  const updates = {};
+
+  if (has('title')) {
+    const title = typeof b.title === 'string' ? b.title.trim() : '';
+    if (!title) return bad('Please describe the recurring task.');
+    updates.title = title;
+  }
+  if (has('employee_id')) {
+    const employee = await db.prepare(`SELECT id FROM users WHERE id = ? AND is_active = 1 AND role IN ('employee', 'leader')`).get(b.employee_id);
+    if (!employee) return bad('That person is no longer available. Choose someone else.');
+    updates.employee_id = employee.id;
+  }
+  if (has('priority')) {
+    if (!['Low', 'Medium', 'High'].includes(b.priority)) return bad('Priority must be Low, Medium, or High.');
+    updates.priority = b.priority;
+  }
+  if (has('task_type_id')) {
+    const type = await db.prepare('SELECT mechanic FROM task_types WHERE id = ? AND is_active = 1').get(b.task_type_id);
+    if (!type) return bad('That type is no longer available. Choose another.');
+    if (type.mechanic !== 'recurring') return bad('Choose a Recurring-type category for a recurring task.');
+    updates.task_type_id = b.task_type_id;
+  }
+  if (has('main_task_id')) {
+    if (!(await db.prepare('SELECT id FROM main_tasks WHERE id = ? AND is_active = 1').get(b.main_task_id))) return bad('Choose the Process this task belongs to.');
+    updates.main_task_id = b.main_task_id;
+  }
+  if (has('task_activity_id')) {
+    if (!(await db.prepare('SELECT id FROM task_activities WHERE id = ? AND is_active = 1').get(b.task_activity_id))) return bad('Choose the Activity this task belongs to.');
+    updates.task_activity_id = b.task_activity_id;
+  }
+  if (has('reviewer_id')) {
+    if (b.reviewer_id && !(await db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(b.reviewer_id))) {
+      return bad('That reviewer is no longer available. Choose another.');
+    }
+    updates.reviewer_id = b.reviewer_id || null;
+  }
+  if (has('recurrence_rule')) {
+    const ruleError = validateRule(b.recurrence_rule);
+    if (ruleError) return bad(ruleError);
+    updates.recurrence_rule = JSON.stringify(b.recurrence_rule);
+    updates.frequency = describeRule(b.recurrence_rule);
+  }
+  if (has('is_active')) updates.is_active = b.is_active ? 1 : 0;
+
+  // Team Tasks finds an existing series by (person, name) when a recurring task is typed in again, so two
+  // series for the same person must never share a name.
+  const finalTitle = updates.title ?? before.title;
+  const finalEmployee = updates.employee_id ?? before.employee_id;
+  if (updates.title !== undefined || updates.employee_id !== undefined) {
+    const clash = await db.prepare('SELECT id FROM recurring_activities WHERE employee_id = ? AND lower(title) = lower(?) AND id != ?').get(finalEmployee, finalTitle, before.id);
+    if (clash) return bad('This person already has a recurring task with that name.');
+  }
+
+  // Only what actually changed is written and audited.
+  const changed = Object.keys(updates).filter((k) => String(updates[k] ?? '') !== String(before[k] ?? ''));
+  if (changed.length > 0) {
+    await db.prepare(`UPDATE recurring_activities SET ${changed.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...changed.map((k) => updates[k]), before.id);
+    const ownerId = finalEmployee;
+    const ownerName = (await db.prepare('SELECT full_name FROM users WHERE id = ?').get(ownerId))?.full_name || null;
+    // The audit trail shows names, never raw IDs.
+    const NAME_OF = {
+      employee_id: 'SELECT full_name AS n FROM users WHERE id = ?', reviewer_id: 'SELECT full_name AS n FROM users WHERE id = ?',
+      task_type_id: 'SELECT name AS n FROM task_types WHERE id = ?', main_task_id: 'SELECT name AS n FROM main_tasks WHERE id = ?',
+      task_activity_id: 'SELECT name AS n FROM task_activities WHERE id = ?',
+    };
+    const readable = async (k, v) => (NAME_OF[k] && v ? (await db.prepare(NAME_OF[k]).get(v))?.n || null : v);
+    for (const k of changed) {
+      if (k === 'recurrence_rule') continue; // recorded through its readable label, `frequency`, instead
+      await recordAudit({
+        tableName: 'recurring_activities', recordId: before.id, fieldName: k,
+        oldValue: await readable(k, before[k]), newValue: await readable(k, updates[k]), changedBy: req.user.id, changedByName: req.user.full_name,
+        ownerId, ownerName,
+      });
+    }
+  }
+  const after = await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(before.id);
+  res.json({ recurring_task: { ...after, rule: parseRule(after) } });
 }));
 
 export default router;
