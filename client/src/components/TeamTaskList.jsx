@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy,
-  CalendarClock, History as HistoryIcon, User, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Pencil,
+  CalendarClock, History as HistoryIcon, User, X, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Pencil,
   Tag, ListTree, ListChecks, Calendar, UserCheck, Flag,
 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -14,9 +15,27 @@ import ImportButton from './ImportButton';
 import AuditTimeline from './AuditTimeline';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
-const EMPTY_TASK_FILTERS = { employee: '', type: '', taskTypeName: '', priority: '', status: '', mainTask: '', taskActivity: '' };
+const STATUS_SORT_ORDER = ['pending', 'in_progress', 'support_required', 'completed'];
+const FILTER_COLUMNS = [
+  { key: 'taskId', label: 'Task ID', sortKey: 'code' },
+  { key: 'task', label: 'Task', sortKey: 'task' },
+  { key: 'employee', label: 'Employee', sortKey: 'employee' },
+  { key: 'type', label: 'Type', sortKey: null },
+  { key: 'mainTask', label: 'Process', sortKey: null },
+  { key: 'priority', label: 'Priority', sortKey: 'priority' },
+  { key: 'due', label: 'Due', sortKey: 'due' },
+  { key: 'status', label: 'Status', sortKey: 'status' },
+];
+const FILTER_KEYS = FILTER_COLUMNS.map((c) => c.key);
+// Each column holds the raw values to SHOW; [] is Excel's "Select All", i.e. unfiltered.
+const EMPTY_TASK_FILTERS = Object.fromEntries(FILTER_KEYS.map((k) => [k, []]));
+// These three cells render through Badge, which humanizes; the rest show raw text, so their labels must too.
+const HUMANIZED_KEYS = ['type', 'priority', 'status'];
+const BLANK_LABEL = '(Blanks)';
 const today = getBusinessDate();
 const PAGE_SIZE = 25;
+const POPOVER_WIDTH = 256;
+const POPOVER_MIN_HEIGHT = 280;
 
 function csvEscape(v) {
   return `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -57,9 +76,248 @@ function compareTasks(a, b, sortBy) {
   }
 }
 
-/** A clickable column header that toggles ascending/descending sort on `by`. Declared at module scope
- *  (not inside the table component) so React doesn't treat it as a brand-new component type every render
- *  — that would remount it, discarding nothing stateful here but still wasteful. */
+/** A task with no named Task Type (older imports) falls back to the seeded default type's own name for its
+ *  mechanic, so it reads, and filters, the same as a task that does carry that default type — not as a
+ *  second "Recurring" or an "Adhoc" next to "Ad-Hoc". */
+function typeLabel(t) {
+  if (t.task_type_name) return t.task_type_name;
+  if (t.type === 'recurring') return 'Recurring';
+  if (t.type === 'adhoc') return 'Ad-hoc';
+  return t.type || '';
+}
+
+/** The raw value a column filter matches against — what that column's cell displays. */
+function columnRawValue(t, key) {
+  switch (key) {
+    case 'taskId': return t.seq ? taskCode(t) : '';
+    case 'task': return t.description || '';
+    case 'employee': return t.employee_name || '';
+    case 'type': return typeLabel(t);
+    case 'mainTask': return t.main_task_name || '';
+    case 'priority': return t.priority || '';
+    case 'due': return t.due_date || '';
+    case 'status': return t.status || '';
+    default: return '';
+  }
+}
+
+function optionLabel(key, value) {
+  if (value === '') return BLANK_LABEL;
+  return HUMANIZED_KEYS.includes(key) ? humanize(value) : value;
+}
+
+// Built from the loaded rows (like Excel's own column filter), not the org's master lists — a value with
+// no rows in this table would only ever filter down to nothing. Empty cells get a "(Blanks)" entry,
+// otherwise unticking one Process would silently hide every task that has no Process at all.
+function uniqueColumnOptions(tasks, key) {
+  const values = [...new Set(tasks.map((t) => columnRawValue(t, key)))];
+  const present = values.filter(Boolean);
+  if (key === 'priority') present.sort((a, b) => PRIORITIES.indexOf(a) - PRIORITIES.indexOf(b));
+  else if (key === 'status') present.sort((a, b) => STATUS_SORT_ORDER.indexOf(a) - STATUS_SORT_ORDER.indexOf(b));
+  else present.sort((a, b) => a.localeCompare(b));
+  if (values.includes('')) present.push('');
+  return present.map((v) => ({ value: v, label: optionLabel(key, v) }));
+}
+
+function hasFilterValue(v) {
+  return v.length > 0;
+}
+
+// A value that's ticked but whose last row just left the table (say, that task was completed) must still be
+// listed, ticked and untickable. Otherwise the column looks unfiltered while it hides everything.
+function withSelectedValues(options, selected, key) {
+  const present = new Set(options.map((o) => o.value));
+  const missing = selected.filter((v) => !present.has(v));
+  if (missing.length === 0) return options;
+  return [...options, ...missing.map((v) => ({ value: v, label: optionLabel(key, v), stale: true }))];
+}
+
+// Measured against the visual viewport (what's actually on screen, excluding a phone's open keyboard).
+// Opens below the header button, or above when that side has more room; never shorter than
+// POPOVER_MIN_HEIGHT, sliding over the header if it must, so the option list can't collapse to nothing.
+function popoverPosition(anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const vv = window.visualViewport;
+  const viewTop = vv ? vv.offsetTop : 0;
+  const viewLeft = vv ? vv.offsetLeft : 0;
+  const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  const viewRight = vv ? vv.offsetLeft + vv.width : window.innerWidth;
+  const viewHeight = viewBottom - viewTop;
+  const width = Math.min(POPOVER_WIDTH, viewRight - viewLeft - 16);
+  const left = Math.max(viewLeft + 8, Math.min(rect.left, viewRight - width - 8));
+  const below = viewBottom - rect.bottom - 14;
+  const above = rect.top - viewTop - 14;
+  const openBelow = below >= POPOVER_MIN_HEIGHT || below >= above;
+  const maxHeight = Math.min(420, viewHeight - 16, Math.max(openBelow ? below : above, POPOVER_MIN_HEIGHT));
+  if (openBelow) {
+    return { top: Math.max(viewTop + 8, Math.min(rect.bottom + 6, viewBottom - 8 - maxHeight)), left, width, maxHeight };
+  }
+  const bottom = window.innerHeight - viewBottom + 8;
+  return { bottom: Math.max(bottom, Math.min(window.innerHeight - rect.top + 6, window.innerHeight - viewTop - 8 - maxHeight)), left, width, maxHeight };
+}
+
+/** Excel-style per-column filter menu. Portaled to document.body and fixed-positioned under its header
+ *  button, same reason Modal portals: this app's animate-* classes leave a lingering transform on
+ *  ancestors, which would otherwise re-anchor `position: fixed` and clip it inside the table's
+ *  overflow-x-auto wrapper. z-10 keeps it under the sticky top nav (z-20) and Modals (z-50), so on scroll
+ *  it slides beneath the nav like an attached dropdown instead of painting over it.
+ *
+ *  Excel semantics: an unfiltered column opens with everything ticked. Typing in the search box pre-ticks
+ *  every match in a separate selection ("Select All Search Results"), and Apply then shows exactly those.
+ *  Edits stay local until Apply. */
+function ColumnFilterPopover({ column, currentValue, options, anchorEl, onApply, onClear, onClose }) {
+  const [checked, setChecked] = useState(() => new Set(currentValue.length ? currentValue : options.map((o) => o.value)));
+  const [searchChecked, setSearchChecked] = useState(() => new Set());
+  const [query, setQuery] = useState('');
+  const [pos, setPos] = useState(() => popoverPosition(anchorEl));
+  // On a touch screen, autofocusing the search box pops the keyboard up over the checkboxes.
+  const [finePointer] = useState(() => window.matchMedia?.('(pointer: fine)').matches ?? true);
+  const popoverRef = useRef(null);
+
+  // Keyboard-driven closes hand focus back to the funnel button. An outside click doesn't, since that
+  // click has already put focus where the user wanted it.
+  const closeToAnchor = useCallback((action) => { action(); anchorEl.focus(); }, [anchorEl]);
+
+  useEffect(() => {
+    function onPointerDown(e) {
+      if (popoverRef.current?.contains(e.target) || anchorEl.contains(e.target)) return;
+      onClose();
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { closeToAnchor(onClose); return; }
+      // Portaled to the end of <body>, so without this Tab would walk straight off the page.
+      if (e.key !== 'Tab' || !popoverRef.current?.contains(document.activeElement)) return;
+      const focusable = popoverRef.current.querySelectorAll('button:not([disabled]), input:not([disabled])');
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === popoverRef.current)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [anchorEl, onClose, closeToAnchor]);
+
+  // Re-measure every frame while open rather than only on scroll/resize: a notice appearing or vanishing
+  // above the table shifts the header without firing either event. One rect read per frame, and a
+  // re-render only when the position actually changes.
+  useEffect(() => {
+    let frame = 0;
+    let last = JSON.stringify(popoverPosition(anchorEl));
+    function track() {
+      if (!anchorEl.isConnected) { onClose(); return; }
+      const next = popoverPosition(anchorEl);
+      const key = JSON.stringify(next);
+      if (key !== last) { last = key; setPos(next); }
+      frame = requestAnimationFrame(track);
+    }
+    frame = requestAnimationFrame(track);
+    return () => cancelAnimationFrame(frame);
+  }, [anchorEl, onClose]);
+
+  const matches = (term) => (o) => o.label.toLowerCase().includes(term);
+  const searching = query.trim() !== '';
+  const visibleOptions = searching ? options.filter(matches(query.trim().toLowerCase())) : options;
+  const selection = searching ? searchChecked : checked;
+  const setSelection = searching ? setSearchChecked : setChecked;
+  const allVisibleChecked = visibleOptions.length > 0 && visibleOptions.every((o) => selection.has(o.value));
+  const someVisibleChecked = visibleOptions.some((o) => selection.has(o.value));
+
+  function onSearch(e) {
+    const q = e.target.value;
+    setQuery(q);
+    setSearchChecked(new Set(options.filter(matches(q.trim().toLowerCase())).map((o) => o.value)));
+  }
+
+  function toggleOption(value) {
+    setSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelection((prev) => {
+      const next = new Set(prev);
+      visibleOptions.forEach((o) => (allVisibleChecked ? next.delete(o.value) : next.add(o.value)));
+      return next;
+    });
+  }
+
+  function apply() {
+    if (!someVisibleChecked) return;
+    const values = [...selection];
+    // Every value ticked is Excel's unfiltered state — store it as [] so the column isn't flagged as filtered.
+    closeToAnchor(() => onApply(values.length === options.length ? [] : values));
+  }
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      role="dialog"
+      aria-label={`Filter ${column.label}`}
+      tabIndex={-1}
+      style={{ position: 'fixed', ...pos }}
+      className="z-10 bg-white rounded-xl border border-grey-200 shadow-xl shadow-grey-900/15 flex flex-col overflow-y-auto focus:outline-none animate-scale-in"
+    >
+      <div className="flex items-center justify-between px-3 py-2 border-b border-grey-100 shrink-0">
+        <span className="text-xs font-semibold text-grey-700">Filter: {column.label}</span>
+        <button type="button" onClick={() => closeToAnchor(onClose)} aria-label="Close filter" className="text-grey-400 hover:text-grey-700 transition-colors press-scale">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="px-2.5 pt-2.5 shrink-0">
+        <Input
+          autoFocus={finePointer}
+          value={query}
+          onChange={onSearch}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } }}
+          placeholder={`Search ${column.label}…`}
+          aria-label={`Search ${column.label} values`}
+          className="py-1.5! text-xs!"
+        />
+        <label className="flex items-center gap-2 text-xs font-semibold text-grey-700 px-1.5 py-1.5 mt-1.5 border-b border-grey-100 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={allVisibleChecked}
+            ref={(el) => { if (el) el.indeterminate = someVisibleChecked && !allVisibleChecked; }}
+            onChange={toggleAll}
+            disabled={visibleOptions.length === 0}
+            className="cursor-pointer"
+          />
+          {searching ? 'Select All Search Results' : 'Select All'}
+        </label>
+      </div>
+
+      <div className="flex-1 min-h-16 max-h-60 overflow-y-auto px-2.5 py-1">
+        {visibleOptions.length === 0 ? (
+          <p className="text-xs text-grey-400 px-1.5 py-2">No matches.</p>
+        ) : visibleOptions.map((o) => (
+          <label key={o.value} className="flex items-center gap-2 text-xs text-grey-700 px-1.5 py-1.5 rounded-md hover:bg-grey-50 cursor-pointer">
+            <input type="checkbox" checked={selection.has(o.value)} onChange={() => toggleOption(o.value)} className="cursor-pointer shrink-0" />
+            <span className={`truncate ${o.value === '' ? 'italic text-grey-500' : ''}`}>{o.label}</span>
+            {o.stale && <span className="ml-auto shrink-0 text-grey-400">no open tasks</span>}
+          </label>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-grey-100 shrink-0">
+        <button type="button" onClick={() => closeToAnchor(onClear)} className="text-xs font-medium text-grey-500 hover:text-grey-800 transition-colors press-scale">
+          Clear
+        </button>
+        <Button size="sm" onClick={apply} disabled={!someVisibleChecked}>Apply</Button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function DetailField({ icon: Icon, label, value }) {
   return (
     <div className="flex items-start gap-2.5 bg-grey-50 border border-grey-100 rounded-lg px-3 py-2.5">
@@ -69,18 +327,6 @@ function DetailField({ icon: Icon, label, value }) {
         <div className="text-sm text-grey-800 font-medium truncate">{value || '—'}</div>
       </div>
     </div>
-  );
-}
-
-function SortHeader({ by, sort, onSort, children, className = '' }) {
-  const active = sort.by === by;
-  const Icon = active ? (sort.dir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
-  return (
-    <th className={`py-2 pr-4 ${className}`}>
-      <button type="button" onClick={() => onSort(by)} className="inline-flex items-center gap-1 hover:text-grey-800 transition-colors press-scale">
-        {children} <Icon className={`w-3 h-3 ${active ? 'text-brand-600' : 'text-grey-300'}`} />
-      </button>
-    </th>
   );
 }
 
@@ -104,23 +350,10 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
   const [detailTask, setDetailTask] = useState(null);
   const [editTask, setEditTask] = useState(null);
   const [loadError, setLoadError] = useState('');
-  const [employeeOptions, setEmployeeOptions] = useState([]);
-  const [mainTaskOptions, setMainTaskOptions] = useState([]);
-  const [taskActivityOptions, setTaskActivityOptions] = useState([]);
-  const [taskTypeOptions, setTaskTypeOptions] = useState([]);
   const [sort, setSort] = useState({ by: 'due', dir: 'asc' });
   const [page, setPage] = useState(1);
+  const [openFilter, setOpenFilter] = useState(null); // { key, anchorEl } — one column menu open at a time
   const isAdminTier = ['admin', 'super_admin'].includes(user.role);
-
-  // Sourced from the org's canonical lists (not from whichever tasks happen to be loaded), same pattern
-  // History.jsx already uses — otherwise someone with zero currently-open tasks can never be filtered to
-  // at all. Both endpoints are open to every role, so this works the same regardless of who's viewing.
-  useEffect(() => {
-    api.get('/history/summary').then((d) => setEmployeeOptions(d.summary.map((s) => s.full_name).sort())).catch(() => {});
-    api.get('/main-tasks').then((d) => setMainTaskOptions(d.main_tasks.filter((m) => m.is_active).map((m) => m.name).sort())).catch(() => {});
-    api.get('/task-activities').then((d) => setTaskActivityOptions(d.task_activities.filter((a) => a.is_active).map((a) => a.name).sort())).catch(() => {});
-    api.get('/task-types').then((d) => setTaskTypeOptions(d.task_types.filter((t) => t.is_active).map((t) => t.name).sort())).catch(() => {});
-  }, []);
 
   function load(noticeText) {
     setLoadError('');
@@ -191,15 +424,16 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
   // rather than showing an empty page the user has to notice and back out of themselves.
   useEffect(() => { setPage(1); }, [filters, sort, tasks]);
 
-  const filteredTasks = useMemo(() => (tasks || []).filter((t) =>
-    (!filters.employee || t.employee_name === filters.employee)
-    && (!filters.type || t.type === filters.type)
-    && (!filters.taskTypeName || t.task_type_name === filters.taskTypeName)
-    && (!filters.priority || t.priority === filters.priority)
-    && (!filters.status || t.status === filters.status)
-    && (!filters.mainTask || t.main_task_name === filters.mainTask)
-    && (!filters.taskActivity || t.task_activity_name === filters.taskActivity)
-  ), [tasks, filters]);
+  // AND across columns: a row must be in every filtered column's allowed set.
+  const filteredTasks = useMemo(() => {
+    const active = FILTER_KEYS.filter((k) => filters[k].length > 0).map((k) => [k, new Set(filters[k])]);
+    return (tasks || []).filter((t) => active.every(([k, allowed]) => allowed.has(columnRawValue(t, k))));
+  }, [tasks, filters]);
+  const columnOptions = useMemo(
+    () => Object.fromEntries(FILTER_KEYS.map((k) => [k, uniqueColumnOptions(tasks || [], k)])),
+    [tasks]
+  );
+  const closeFilter = useCallback(() => setOpenFilter(null), []);
   const sortedTasks = useMemo(() => {
     const copy = [...filteredTasks];
     copy.sort((a, b) => (sort.dir === 'asc' ? 1 : -1) * compareTasks(a, b, sort.by));
@@ -208,7 +442,7 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
   const pageCount = Math.max(1, Math.ceil(sortedTasks.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
   const pagedTasks = useMemo(() => sortedTasks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE), [sortedTasks, currentPage]);
-  const filtersActive = Object.values(filters).some(Boolean);
+  const filtersActive = Object.values(filters).some(hasFilterValue);
   const isRowReadOnly = (t) => readOnly || !canActOn(t);
   // Selection/bulk actions only ever apply to what's visibly on screen — selecting "all" shouldn't
   // silently reach into pages the user isn't looking at.
@@ -261,6 +495,7 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
               ? ' You can delete a task you created yourself — not one someone else logged.'
               : ' Only a Leader or Admin can delete a task.'}
           {' '}Tick the checkboxes to complete or reschedule several tasks at once.
+          {' '}Click a column name to sort, or its <Filter className="inline w-3 h-3 -mt-0.5" /> icon to filter.
         </p>
         {!readOnly && showCreate && (
           <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -301,6 +536,19 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
 
       {detailTask && <TaskDetailDrawer task={detailTask} onChanged={load} canAct={!isRowReadOnly(detailTask)} onClose={() => setDetailTask(null)} />}
 
+      {openFilter && (
+        <ColumnFilterPopover
+          key={openFilter.key}
+          column={FILTER_COLUMNS.find((c) => c.key === openFilter.key)}
+          currentValue={filters[openFilter.key]}
+          options={withSelectedValues(columnOptions[openFilter.key], filters[openFilter.key], openFilter.key)}
+          anchorEl={openFilter.anchorEl}
+          onApply={(value) => { setFilters((f) => ({ ...f, [openFilter.key]: value })); closeFilter(); }}
+          onClear={() => { setFilters((f) => ({ ...f, [openFilter.key]: EMPTY_TASK_FILTERS[openFilter.key] })); closeFilter(); }}
+          onClose={closeFilter}
+        />
+      )}
+
       <ErrorBanner message={deleteError} />
       {notice && (
         <div className="flex items-center gap-2 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2 text-sm mb-3 animate-scale-in">
@@ -309,55 +557,16 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
       )}
 
       {tasks.length > 0 && (
-        <div className="bg-grey-50 rounded-xl p-3.5 mb-3">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-grey-500 mb-2 uppercase tracking-wide">
-            <Filter className="w-3.5 h-3.5" /> Filter
-          </div>
-          <div className="grid sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
-            <Select value={filters.employee} onChange={(e) => setFilters((f) => ({ ...f, employee: e.target.value }))}>
-              <option value="">All employees</option>
-              {employeeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
-            </Select>
-            <Select value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}>
-              <option value="">All mechanics</option>
-              <option value="recurring">Recurring</option>
-              <option value="adhoc">Ad-hoc</option>
-            </Select>
-            <Select value={filters.taskTypeName} onChange={(e) => setFilters((f) => ({ ...f, taskTypeName: e.target.value }))}>
-              <option value="">All task types</option>
-              {taskTypeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
-            </Select>
-            <Select value={filters.mainTask} onChange={(e) => setFilters((f) => ({ ...f, mainTask: e.target.value }))}>
-              <option value="">All Processes</option>
-              {mainTaskOptions.map((n) => <option key={n} value={n}>{n}</option>)}
-            </Select>
-            <Select value={filters.taskActivity} onChange={(e) => setFilters((f) => ({ ...f, taskActivity: e.target.value }))}>
-              <option value="">All activities</option>
-              {taskActivityOptions.map((n) => <option key={n} value={n}>{n}</option>)}
-            </Select>
-            <Select value={filters.priority} onChange={(e) => setFilters((f) => ({ ...f, priority: e.target.value }))}>
-              <option value="">All priorities</option>
-              {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
-            </Select>
-            <Select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-              <option value="">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
-              <option value="support_required">Support Required</option>
-            </Select>
-          </div>
-          <div className="flex flex-wrap items-center gap-4 mt-3 pt-3 border-t border-grey-200">
-            {filtersActive && (
-              <button onClick={() => setFilters(EMPTY_TASK_FILTERS)} className="inline-flex items-center gap-1 text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors">
-                <XCircle className="w-3.5 h-3.5" /> Clear Filters
-              </button>
-            )}
-            <button onClick={exportCsv} className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-800 transition-colors">
-              <Download className="w-3.5 h-3.5" /> Export to CSV
+        <div className="flex flex-wrap items-center gap-4 mb-1">
+          <span className="text-xs text-grey-400">{filteredTasks.length} of {tasks.length} task{tasks.length === 1 ? '' : 's'}</span>
+          <button onClick={exportCsv} className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-800 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Export to CSV
+          </button>
+          {filtersActive && (
+            <button onClick={() => setFilters(EMPTY_TASK_FILTERS)} className="inline-flex items-center gap-1 text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors">
+              <XCircle className="w-3.5 h-3.5" /> Clear all filters
             </button>
-            <span className="text-xs text-grey-400">{filteredTasks.length} of {tasks.length} task{tasks.length === 1 ? '' : 's'}</span>
-          </div>
+          )}
         </div>
       )}
 
@@ -386,18 +595,12 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
       )}
       <ErrorBanner message={bulkError} />
 
-      {filteredTasks.length === 0 ? (
-        <EmptyState
-          icon={tasks.length === 0
-            ? <IllustrationEmptyList className="w-16 h-16 mx-auto" />
-            : <IllustrationSearch className="w-16 h-16 mx-auto" />}
-          title={tasks.length === 0 ? 'No open tasks' : 'No tasks match these filters'}
-        >
-          {tasks.length === 0
-            ? (readOnly || !showCreate ? 'Nothing here right now.' : 'Create the first task using the button above, or check back — completed tasks move to History.')
-            : 'Try clearing a filter above.'}
+      {tasks.length === 0 ? (
+        <EmptyState icon={<IllustrationEmptyList className="w-16 h-16 mx-auto" />} title="No open tasks">
+          {readOnly || !showCreate ? 'Nothing here right now.' : 'Create the first task using the button above, or check back — completed tasks move to History.'}
         </EmptyState>
       ) : (
+        <>
         <div className="overflow-x-auto mt-3">
           <table className="w-full text-sm">
             <thead>
@@ -413,14 +616,34 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
                     />
                   </th>
                 )}
-                <SortHeader by="code" sort={sort} onSort={toggleSort}>Task ID</SortHeader>
-                <SortHeader by="task" sort={sort} onSort={toggleSort}>Task</SortHeader>
-                <SortHeader by="employee" sort={sort} onSort={toggleSort}>Employee</SortHeader>
-                <th className="py-2 pr-4">Type</th>
-                <th className="py-2 pr-4">Process</th>
-                <SortHeader by="priority" sort={sort} onSort={toggleSort}>Priority</SortHeader>
-                <SortHeader by="due" sort={sort} onSort={toggleSort}>Due</SortHeader>
-                <SortHeader by="status" sort={sort} onSort={toggleSort}>Status</SortHeader>
+                {FILTER_COLUMNS.map((col) => {
+                  const sorted = col.sortKey && sort.by === col.sortKey;
+                  const SortIcon = sorted ? (sort.dir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+                  const filtered = hasFilterValue(filters[col.key]);
+                  const open = openFilter?.key === col.key;
+                  return (
+                    <th key={col.key} className="py-2 pr-4 whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        {col.sortKey ? (
+                          <button type="button" onClick={() => toggleSort(col.sortKey)} title={`Sort by ${col.label}`} className="inline-flex items-center gap-1 hover:text-grey-800 transition-colors press-scale">
+                            {col.label} <SortIcon className={`w-3 h-3 ${sorted ? 'text-brand-600' : 'text-grey-300'}`} />
+                          </button>
+                        ) : col.label}
+                        <button
+                          type="button"
+                          onClick={(e) => setOpenFilter(open ? null : { key: col.key, anchorEl: e.currentTarget })}
+                          aria-label={`Filter ${col.label}${filtered ? ' (active)' : ''}`}
+                          aria-haspopup="dialog"
+                          aria-expanded={open}
+                          title={filtered ? `${col.label} is filtered` : `Filter ${col.label}`}
+                          className={`w-5 h-5 rounded flex items-center justify-center transition-colors press-scale ${filtered ? 'text-white bg-brand-600 hover:bg-brand-700' : open ? 'text-brand-600 bg-brand-50' : 'text-grey-300 hover:text-grey-600 hover:bg-grey-100'}`}
+                        >
+                          <Filter className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </th>
+                  );
+                })}
                 <th className="py-2 pr-4">Action</th>
                 <th className="py-2 pr-4"></th>
               </tr>
@@ -465,7 +688,7 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
                   </td>
                   <td className="py-2.5 pr-4 text-grey-600">{t.employee_name}</td>
                   <td className="py-2.5 pr-4">
-                    <Badge tone={t.type}>{t.task_type_name || t.type}</Badge>
+                    <Badge tone={t.type}>{typeLabel(t)}</Badge>
                     {t.type === 'recurring' && t.recurring_frequency && (
                       <div className="text-xs text-grey-400 mt-0.5 flex items-center gap-1">
                         <Repeat className="w-3 h-3" /> {t.recurring_frequency}
@@ -575,6 +798,13 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
             </div>
           )}
         </div>
+        {/* Outside the horizontal scroller, so it stays on screen even when the table is scrolled sideways. */}
+        {filteredTasks.length === 0 && (
+          <EmptyState icon={<IllustrationSearch className="w-16 h-16 mx-auto" />} title="No tasks match these filters">
+            Adjust a column filter, or use "Clear all filters" above.
+          </EmptyState>
+        )}
+        </>
       )}
       {editTask && isAdminTier && (
         <EditTaskModal task={editTask} onClose={() => setEditTask(null)} onSaved={(msg) => { setEditTask(null); load(msg); }} />
@@ -1098,7 +1328,7 @@ function TaskDetailDrawer({ task, onChanged, canAct, onClose }) {
     [User, 'Owner', task.employee_name],
     [ListTree, 'Process', task.main_task_name],
     [ListChecks, 'Activity', task.task_activity_name],
-    [Tag, 'Type', task.task_type_name || humanize(task.type)],
+    [Tag, 'Type', typeLabel(task)],
     [Flag, 'Priority', task.priority ? humanize(task.priority) : null],
     [Calendar, 'Due date', task.due_date],
     [UserCheck, 'Reviewer', task.reviewer_name],
