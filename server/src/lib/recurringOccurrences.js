@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import { db, today } from '../db.js';
-import { nextOccurrence } from './recurrence.js';
+import { firstDueDate, nextOccurrence, parseRule } from './recurrence.js';
 import { recordAudit } from './audit.js';
 
 /** Inserts one new commitment as the next occurrence of a recurring series, bumps the series' occurrence
@@ -87,33 +87,69 @@ function latestDueOccurrence(fromDate, activity, asOf) {
  *  ahead by the completion path) is left alone, so running this twice in one day is a no-op the second time. */
 export async function generateDueOccurrences() {
   const date = today();
+  const log = (msg) => console.log(`[Recurring Scheduler] ${msg}`);
+  log(`Started — business date ${date}`);
   const activities = await db.prepare('SELECT * FROM recurring_activities WHERE is_active = 1').all();
+  log(`Active series found: ${activities.length}`);
   let created = 0;
   let ended = 0;
+  let failed = 0;
 
   for (const activity of activities) {
-    const last = await db.prepare(
-      'SELECT * FROM commitments WHERE recurring_activity_id = ? AND is_active = 1 ORDER BY due_date DESC, created_at DESC LIMIT 1'
-    ).get(activity.id);
-    if (!last) continue; // every series is seeded with a commitment at creation — defensive skip if that's somehow missing
-    if (last.due_date >= date) continue; // already current or pre-generated ahead — nothing to do
+    // One bad series (malformed data, a constraint error) must not stop every series after it from
+    // generating — log it and move on; the run still reports it as failed.
+    try {
+      const last = await db.prepare(
+        'SELECT * FROM commitments WHERE recurring_activity_id = ? AND is_active = 1 ORDER BY due_date DESC, created_at DESC LIMIT 1'
+      ).get(activity.id);
 
-    const result = latestDueOccurrence(last.due_date, activity, date);
-    if (!result) continue; // next scheduled date hasn't arrived yet
+      let result;
+      let template = last;
+      if (last) {
+        log(`Checking: "${activity.title}" — last occurrence ${last.due_date}`);
+        if (last.due_date >= date) { log('  Already current, nothing to do'); continue; }
+        result = latestDueOccurrence(last.due_date, activity, date);
+      } else {
+        // Every series is seeded with an occurrence at creation, but deleting a task is a hard delete —
+        // delete a series' only task and it has no row left to advance from. Rebuild the current one from
+        // the series itself instead, walking the rule from its own first due date. The walk checks the
+        // end condition against occurrences_created (which still counts deleted rows), so this can never
+        // bring back more occurrences than an "after N times" series allows.
+        const firstDue = firstDueDate(activity.series_start_date || date, parseRule(activity));
+        log(`Checking: "${activity.title}" — no occurrence left, series starts ${firstDue}`);
+        if (firstDue > date) { log('  Not started yet, nothing to do'); continue; }
+        // null = the next date after firstDue is still ahead, so firstDue itself is the current one;
+        // { ended } with no date = its last allowed occurrence was already used, so just end the series.
+        result = latestDueOccurrence(firstDue, activity, date) || { date: firstDue, ended: false };
+        template = {
+          employee_id: activity.employee_id, description: activity.title, task_type_id: activity.task_type_id,
+          category_id: activity.category_id, main_task_id: activity.main_task_id, task_activity_id: activity.task_activity_id,
+          reviewer_id: activity.reviewer_id, priority: activity.priority || 'Medium',
+        };
+      }
+      if (!result) { log('  Next occurrence not due yet'); continue; }
 
-    if (result.date) {
-      await insertOccurrence({
-        activity, dueDate: result.date, template: last,
-        changedBy: null, changedByName: 'System (scheduled recurrence)',
-        reason: 'Automatic — generated on schedule, independent of the previous occurrence',
-      });
-      created++;
-    }
-    if (result.ended) {
-      await db.prepare('UPDATE recurring_activities SET is_active = 0 WHERE id = ?').run(activity.id);
-      ended++;
+      if (result.date) {
+        log(`  Next occurrence: ${result.date}`);
+        await insertOccurrence({
+          activity, dueDate: result.date, template,
+          changedBy: null, changedByName: 'System (scheduled recurrence)',
+          reason: 'Automatic — generated on schedule, independent of the previous occurrence',
+        });
+        created++;
+        log(`  Created occurrence due ${result.date}`);
+      }
+      if (result.ended) {
+        await db.prepare('UPDATE recurring_activities SET is_active = 0 WHERE id = ?').run(activity.id);
+        ended++;
+        log('  Series reached its end condition — ended');
+      }
+    } catch (e) {
+      failed++;
+      console.error(`[Recurring Scheduler] Failed on series ${activity.id}: ${e.message}`);
     }
   }
 
-  return { checked: activities.length, created, ended };
+  log(`Completed: ${created} created, ${ended} ended${failed ? `, ${failed} failed` : ''}`);
+  return { checked: activities.length, created, ended, failed };
 }

@@ -19,7 +19,14 @@ function requireCronSecret(req, res, next) {
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
   const matches = secret && a.length === b.length && timingSafeEqual(a, b);
-  if (!matches) return res.status(401).json({ error: 'Not authorized.' });
+  if (!matches) {
+    // Says which side is wrong without ever echoing either value — the first line is the one to look for
+    // in Vercel's logs when scheduled runs silently produce nothing.
+    console.warn(secret
+      ? `[Recurring Scheduler] Rejected: ${provided ? 'wrong' : 'missing'} Authorization header`
+      : '[Recurring Scheduler] Rejected: CRON_SECRET is not set in this environment');
+    return res.status(401).json({ error: 'Not authorized.' });
+  }
   next();
 }
 

@@ -1268,6 +1268,114 @@ test('recurring generation — a race between two callers inserting the same occ
   assert.equal(after.occurrences_created, 2, 'the loser of the race must not still bump the counter for a row it didn\'t actually create');
 });
 
+// A series row on its own, with NO occurrence row — what a series looks like after its only task was
+// deleted (task delete is a hard delete), which is exactly the state every live series was found in.
+async function seedSeriesOnly({ rule, startDate, isActive = 1, occurrencesCreated = 1 }) {
+  const activityId = uuid();
+  await db.prepare(`
+    INSERT INTO recurring_activities (id, employee_id, title, recurrence_rule, series_start_date, occurrences_created, reviewer_id, priority, is_active, created_by)
+    VALUES (?, ?, 'Bank reconciliation', ?, ?, ?, ?, 'High', ?, ?)
+  `).run(activityId, ids.reportAId, JSON.stringify(rule), startDate, occurrencesCreated, ids.midLeaderAId, isActive, ids.superAdminId);
+  return activityId;
+}
+
+function monthsAgo(n) {
+  const [y, m, d] = today().split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 - n, d)).toISOString().slice(0, 10);
+}
+
+test('recurring generation — Weekly: an occurrence a week old gets this week\'s occurrence, a 10-day-old one lands on its own weekday', async () => {
+  const rule = { interval: 1, unit: 'week', weekdays: [], end: { type: 'never' } };
+  const onTime = await seedRecurringSeries({ rule, lastDueDate: daysAgo(7) });
+  const offset = await seedRecurringSeries({ rule, lastDueDate: daysAgo(10) });
+  await generateDueOccurrences();
+  const a = await db.prepare('SELECT due_date FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(onTime.activityId);
+  assert.deepEqual(a.map((r) => r.due_date), [daysAgo(7), today()]);
+  const b = await db.prepare('SELECT due_date FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(offset.activityId);
+  assert.deepEqual(b.map((r) => r.due_date), [daysAgo(10), daysAgo(3)], 'the next weekly date is 7 days after the last one, not "today"');
+});
+
+test('recurring generation — Monthly: an occurrence one month old gets this month\'s occurrence', { skip: Number(today().slice(8)) > 28 && 'month-end clamping makes the exact date vary on the 29th–31st' }, async () => {
+  const { activityId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'month', end: { type: 'never' } }, lastDueDate: monthsAgo(1) });
+  await generateDueOccurrences();
+  const rows = await db.prepare('SELECT due_date FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId);
+  assert.deepEqual(rows.map((r) => r.due_date), [monthsAgo(1), today()]);
+});
+
+test('recurring generation — a paused series generates nothing, however far behind it is', async () => {
+  const { activityId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(6) });
+  await db.prepare('UPDATE recurring_activities SET is_active = 0 WHERE id = ?').run(activityId);
+  const orphanPaused = await seedSeriesOnly({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, startDate: daysAgo(6), isActive: 0 });
+  await generateDueOccurrences();
+  assert.equal((await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId)).c, 1);
+  assert.equal((await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(orphanPaused)).c, 0);
+});
+
+test('recurring generation — an end date is respected: the last in-range occurrence is created and the series stops', async () => {
+  const { activityId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'on_date', date: daysAgo(2) } }, lastDueDate: daysAgo(5) });
+  await generateDueOccurrences();
+  const rows = await db.prepare('SELECT due_date FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId);
+  assert.deepEqual(rows.map((r) => r.due_date), [daysAgo(5), daysAgo(2)], 'nothing after the end date, and nothing for the skipped days in between');
+  assert.equal((await db.prepare('SELECT is_active FROM recurring_activities WHERE id = ?').get(activityId)).is_active, 0);
+});
+
+test('recurring generation — a series whose every occurrence was deleted still generates today\'s, built from the series itself', async () => {
+  const activityId = await seedSeriesOnly({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, startDate: daysAgo(4) });
+  await generateDueOccurrences();
+  const rows = await db.prepare('SELECT * FROM commitments WHERE recurring_activity_id = ?').all(activityId);
+  assert.equal(rows.length, 1, 'exactly one current occurrence, not one per day since the series started');
+  const [c] = rows;
+  assert.equal(c.due_date, today());
+  assert.equal(c.type, 'recurring');
+  assert.equal(c.status, 'pending');
+  assert.equal(c.description, 'Bank reconciliation', 'the task name comes from the series title');
+  assert.equal(c.employee_id, ids.reportAId);
+  assert.equal(c.priority, 'High');
+  assert.equal(c.reviewer_id, ids.midLeaderAId);
+
+  await generateDueOccurrences();
+  assert.equal((await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId)).c, 1, 'a second run the same day must not add another');
+});
+
+test('recurring generation — a series with no occurrence that has not started yet waits for its start date', async () => {
+  const activityId = await seedSeriesOnly({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, startDate: daysAgo(-3) });
+  await generateDueOccurrences();
+  assert.equal((await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId)).c, 0);
+});
+
+test('recurring generation — a count-limited series with no occurrence left never goes past its count', async () => {
+  const activityId = await seedSeriesOnly({ rule: { interval: 1, unit: 'day', end: { type: 'after_count', count: 1 } }, startDate: daysAgo(3), occurrencesCreated: 1 });
+  await generateDueOccurrences();
+  assert.equal((await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId)).c, 0, 'its one allowed occurrence was already used (and deleted)');
+  assert.equal((await db.prepare('SELECT is_active FROM recurring_activities WHERE id = ?').get(activityId)).is_active, 0);
+});
+
+test('recurring generation — a scheduler-created task shows up in My Tasks, Team Tasks, and History, with its old overdue one still there', async () => {
+  const { activityId, commitmentId: overdueId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(2) });
+  await generateDueOccurrences();
+  const fresh = await db.prepare('SELECT id FROM commitments WHERE recurring_activity_id = ? AND due_date = ?').get(activityId, today());
+  assert.ok(fresh, 'the scheduler must have created today\'s occurrence');
+
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const { body: saLogin } = await login('admin@test.local', 'AdminPass123');
+
+  const my = await (await fetch(`${baseUrl}/api/scrum/my-tasks`, { headers: authed(reportALogin.token) })).json();
+  const myIds = my.tasks.map((t) => t.id);
+  assert.ok(myIds.includes(fresh.id), 'My Tasks must list the new occurrence');
+  assert.ok(myIds.includes(overdueId), 'My Tasks must still list the uncompleted previous one');
+  const mine = my.tasks.find((t) => t.id === fresh.id);
+  assert.equal(mine.type, 'recurring');
+  assert.equal(mine.employee_name, 'Report A');
+  assert.ok(mine.recurring_activity_id);
+
+  const team = await (await fetch(`${baseUrl}/api/leader/org-tasks`, { headers: authed(saLogin.token) })).json();
+  assert.ok(team.tasks.some((t) => t.id === fresh.id), 'Team Tasks must list it');
+
+  const hist = await (await fetch(`${baseUrl}/api/history/commitments?type=recurring&from=${daysAgo(3)}&to=${today()}`, { headers: authed(saLogin.token) })).json();
+  const histIds = hist.commitments.map((c) => c.id);
+  assert.ok(histIds.includes(fresh.id) && histIds.includes(overdueId), 'History must list both occurrences');
+});
+
 // The completion-triggered path (an employee marking today's occurrence done, via POST .../resolve) is a
 // second way a recurring series advances, alongside the schedule-triggered sweep tested above — it had no
 // integration test at all before this.
@@ -1333,4 +1441,17 @@ test('cron — /api/cron/generate-recurring refuses every request without the ri
   const body = await withSecret.json();
   assert.equal(body.ok, true);
   assert.equal(typeof body.checked, 'number');
+});
+
+test('cron — with CRON_SECRET unset, nothing gets in (not an empty Bearer, not "Bearer undefined")', async () => {
+  const saved = process.env.CRON_SECRET;
+  delete process.env.CRON_SECRET;
+  try {
+    for (const header of [undefined, 'Bearer ', 'Bearer undefined', 'Bearer']) {
+      const res = await fetch(`${baseUrl}/api/cron/generate-recurring`, header === undefined ? {} : { headers: { Authorization: header } });
+      assert.equal(res.status, 401);
+    }
+  } finally {
+    process.env.CRON_SECRET = saved;
+  }
 });
