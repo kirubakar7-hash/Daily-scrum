@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, RotateCw, Check, AlertTriangle, Repeat, Filter, Download, XCircle, MessageSquareText, LifeBuoy,
-  CalendarClock, History as HistoryIcon, User, X, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Pencil,
+  CalendarClock, History as HistoryIcon, User, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Pencil,
+  Tag, ListTree, ListChecks, Calendar, UserCheck, Flag,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
@@ -59,6 +60,18 @@ function compareTasks(a, b, sortBy) {
 /** A clickable column header that toggles ascending/descending sort on `by`. Declared at module scope
  *  (not inside the table component) so React doesn't treat it as a brand-new component type every render
  *  — that would remount it, discarding nothing stateful here but still wasteful. */
+function DetailField({ icon: Icon, label, value }) {
+  return (
+    <div className="flex items-start gap-2.5 bg-grey-50 border border-grey-100 rounded-lg px-3 py-2.5">
+      <Icon className="w-4 h-4 mt-0.5 shrink-0 text-grey-400" />
+      <div className="min-w-0">
+        <div className="text-xs text-grey-400">{label}</div>
+        <div className="text-sm text-grey-800 font-medium truncate">{value || '—'}</div>
+      </div>
+    </div>
+  );
+}
+
 function SortHeader({ by, sort, onSort, children, className = '' }) {
   const active = sort.by === by;
   const Icon = active ? (sort.dir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
@@ -1067,13 +1080,6 @@ function TaskDetailDrawer({ task, onChanged, canAct, onClose }) {
       .catch((e) => setError(e.message || "Couldn't load this task's history."));
   }, [task.id]);
 
-  // Escape-to-close, matching every other dismissable panel in the app.
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onClose(); }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   async function resolveRequest(action) {
     setRequestBusy(true);
     setRequestError('');
@@ -1089,86 +1095,90 @@ function TaskDetailDrawer({ task, onChanged, canAct, onClose }) {
   }
 
   const fields = [
-    ['Owner', task.employee_name],
-    ['Process', task.main_task_name],
-    ['Activity', task.task_activity_name],
-    ['Type', task.task_type_name || humanize(task.type)],
-    ['Priority', task.priority],
-    ['Due date', task.due_date],
-    ['Reviewer', task.reviewer_name],
+    [User, 'Owner', task.employee_name],
+    [ListTree, 'Process', task.main_task_name],
+    [ListChecks, 'Activity', task.task_activity_name],
+    [Tag, 'Type', task.task_type_name || humanize(task.type)],
+    [Flag, 'Priority', task.priority ? humanize(task.priority) : null],
+    [Calendar, 'Due date', task.due_date],
+    [UserCheck, 'Reviewer', task.reviewer_name],
   ];
 
+  const requestNote = task.non_completion_reason || task.non_completion_explanation;
+
   return (
-    <aside className="fixed top-16 bottom-0 right-0 z-30 w-full sm:w-[420px] bg-white border-l border-grey-100 shadow-xl shadow-grey-900/10 flex flex-col animate-fade-in-up">
-      <div className="px-4 py-3.5 border-b border-grey-100 shrink-0 flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="shrink-0 text-xs font-mono font-semibold bg-brand-50 text-brand-700 px-2 py-0.5 rounded-md border border-brand-100">{code}</span>
-            {task.employee_name && (
-              <span className="flex items-center gap-1 text-xs text-grey-500 truncate">
-                <User className="w-3.5 h-3.5 shrink-0 text-grey-400" />
-                {task.employee_name}
-              </span>
-            )}
+    <Modal
+      open
+      onClose={onClose}
+      wide
+      title={(
+        <span className="inline-flex items-center gap-2">
+          <span className="text-xs font-mono font-semibold bg-brand-50 text-brand-700 px-2 py-0.5 rounded-md border border-brand-100">{code}</span>
+          <span>Task Details</span>
+        </span>
+      )}
+    >
+      <div className="space-y-5">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap mb-1.5">
+            <Badge tone={task.status}>{task.status}</Badge>
+            {task.priority && <Badge tone={task.priority}>{task.priority} priority</Badge>}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="w-7 h-7 rounded-full flex items-center justify-center text-grey-400 hover:text-grey-700 hover:bg-grey-100 transition-colors shrink-0 press-scale"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <h2 className="font-bold text-grey-900 text-sm leading-snug">{task.description}</h2>
-        <Badge tone={task.status}>{task.status}</Badge>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs bg-grey-50 border border-grey-100 rounded-lg px-3 py-2.5">
-          {fields.map(([label, value]) => (
-            <div key={label}>
-              <div className="text-grey-400">{label}</div>
-              <div className="text-grey-800 font-medium">{value || '—'}</div>
-            </div>
-          ))}
+          <h3 className="font-bold text-grey-900 text-lg leading-snug">{task.description}</h3>
         </div>
 
         {task.pending_request_id && (
-          <div className="border border-amber-200 bg-amber-50 rounded-lg p-3">
+          <div className="border border-amber-200 bg-amber-50 rounded-xl p-3.5">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-800">
-              <AlertTriangle className="w-3.5 h-3.5" />
+              <AlertTriangle className="w-4 h-4 shrink-0" />
               {task.pending_request_type === 'due_date_change'
                 ? `Due-date change requested → ${task.pending_request_due_date}`
                 : 'Support requested'}
             </div>
+            {requestNote && (
+              <p className="text-xs text-amber-700 mt-1.5 leading-relaxed">
+                {task.non_completion_reason && <span className="font-medium">{humanize(task.non_completion_reason)}: </span>}
+                {task.non_completion_explanation}
+              </p>
+            )}
             {canAct ? (
               <>
-                <div className="flex gap-2 mt-2">
+                <div className="flex gap-2 mt-3">
                   <Button size="sm" disabled={requestBusy} onClick={() => resolveRequest('approve')}>Approve</Button>
                   <Button size="sm" variant="secondary" disabled={requestBusy} onClick={() => resolveRequest('reject')}>Reject</Button>
                 </div>
                 <ErrorBanner message={requestError} />
               </>
             ) : (
-              <p className="text-xs text-amber-700 mt-1">Waiting on a Leader's review.</p>
+              <p className="text-xs text-amber-700 mt-2">Waiting on a Leader's review.</p>
             )}
           </div>
         )}
 
-        <div className="flex items-start gap-2 bg-grey-50 border border-grey-100 rounded-lg px-3 py-2 text-xs text-grey-500 leading-relaxed">
-          <HistoryIcon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-grey-400" />
-          <span>A permanent record of every change to this task. <span className="text-amber-700 font-medium">Amber</span> entries mean the due date was changed from its original schedule.</span>
-        </div>
-        <ErrorBanner message={error} />
-        {!error && logs === null && (
-          <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
+        <div>
+          <h4 className="text-xs font-semibold text-grey-400 uppercase tracking-wide mb-2">Task Details</h4>
+          <div className="grid sm:grid-cols-2 gap-2.5">
+            {fields.map(([Icon, label, value]) => <DetailField key={label} icon={Icon} label={label} value={value} />)}
           </div>
-        )}
-        {!error && logs !== null && (
-          <AuditTimeline logs={logs} emptyTitle="No history yet" emptyBody="Nothing recorded for this task yet." />
-        )}
+        </div>
+
+        <div>
+          <h4 className="text-xs font-semibold text-grey-400 uppercase tracking-wide mb-2">Activity &amp; History</h4>
+          <div className="flex items-start gap-2 bg-grey-50 border border-grey-100 rounded-lg px-3 py-2 text-xs text-grey-500 leading-relaxed mb-3">
+            <HistoryIcon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-grey-400" />
+            <span>A permanent record of every change to this task. <span className="text-amber-700 font-medium">Amber</span> entries mean the due date was changed from its original schedule.</span>
+          </div>
+          <ErrorBanner message={error} />
+          {!error && logs === null && (
+            <div className="space-y-2">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
+            </div>
+          )}
+          {!error && logs !== null && (
+            <AuditTimeline logs={logs} emptyTitle="No history yet" emptyBody="Nothing recorded for this task yet." />
+          )}
+        </div>
       </div>
-    </aside>
+    </Modal>
   );
 }
