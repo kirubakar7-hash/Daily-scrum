@@ -233,7 +233,7 @@ export default function RecurrencePicker({ value, onChange, startDate }) {
           </label>
           <label className="flex items-center gap-2 text-sm text-grey-700 cursor-pointer flex-wrap">
             <input type="radio" name={endGroup} checked={end.type === 'after_count'} onChange={() => updateEnd({ type: 'after_count', count: end.count || 10 })} className="accent-[#16469D]" />
-            After
+            <span>After</span>
             {end.type === 'after_count' && (
               <input
                 type="number"
@@ -244,7 +244,7 @@ export default function RecurrencePicker({ value, onChange, startDate }) {
                 className="w-16 rounded-xl border border-grey-300 px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
               />
             )}
-            occurrences
+            <span>occurrences</span>
           </label>
         </div>
       </div>
