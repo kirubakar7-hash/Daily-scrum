@@ -1508,6 +1508,59 @@ test('recurring edit — refuses bad input, name clashes and non-admins; Pause s
   assert.equal((await db.prepare('SELECT is_active FROM recurring_activities WHERE id = ?').get(activityId)).is_active, 0, 'Pause via the same endpoint still works');
 });
 
+test('recurring delete — removes the series, keeps every task it created, and nothing more is generated', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const { activityId, commitmentId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(3), employeeId: ids.reportBId });
+  await db.prepare(`UPDATE recurring_activities SET title = 'Series to delete' WHERE id = ?`).run(activityId);
+  await generateDueOccurrences(); // adds today's task, so the series has an old overdue task and a current one
+  const before = await db.prepare('SELECT id FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId);
+  assert.equal(before.length, 2);
+
+  const res = await fetch(`${baseUrl}/api/recurring-tasks/${activityId}`, { method: 'DELETE', headers: authed(adminLogin.token) });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).tasks_kept, 2);
+
+  assert.equal(await db.prepare('SELECT id FROM recurring_activities WHERE id = ?').get(activityId), undefined, 'the series is gone');
+  const kept = await db.prepare(`SELECT id, type, recurring_activity_id, status FROM commitments WHERE id IN (?, ?)`).all(before[0].id, before[1].id);
+  assert.equal(kept.length, 2, 'both tasks it already created are kept');
+  assert.ok(kept.every((t) => t.recurring_activity_id === null && t.type === 'recurring'), 'unlinked from the deleted series, still marked Recurring');
+  assert.ok(kept.some((t) => t.id === commitmentId), 'including the old overdue one');
+
+  const audit = await db.prepare(`SELECT old_value, reason, owner_name FROM audit_logs WHERE record_id = ? AND field_name = 'deleted'`).get(activityId);
+  assert.match(audit.old_value, /Series to delete/);
+  assert.match(audit.reason, /2 tasks/);
+  assert.equal(audit.owner_name, 'Report B');
+
+  const tasksBefore = (await db.prepare('SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND description = ?').get(ids.reportBId, 'Daily status update')).c;
+  await generateDueOccurrences();
+  const tasksAfter = (await db.prepare('SELECT COUNT(*) c FROM commitments WHERE employee_id = ? AND description = ?').get(ids.reportBId, 'Daily status update')).c;
+  assert.equal(tasksAfter, tasksBefore, 'a deleted series generates nothing');
+
+  // A kept task can still be completed without anything trying to line up a next occurrence.
+  const { body: reportBLogin } = await login('reportb@test.local', 'ReportB123');
+  const done = await fetch(`${baseUrl}/api/scrum/commitments/${commitmentId}/resolve`, { method: 'POST', headers: authed(reportBLogin.token), body: JSON.stringify({ status: 'completed' }) });
+  assert.equal(done.status, 200);
+  assert.equal((await done.json()).next_occurrence, null);
+
+  // The name is free again for a new series for the same person.
+  const again = await fetch(`${baseUrl}/api/recurring-tasks`, {
+    method: 'POST', headers: authed(adminLogin.token),
+    body: JSON.stringify({ title: 'Series to delete', employee_ids: [ids.reportBId], category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId }),
+  });
+  assert.equal(again.status, 201);
+});
+
+test('recurring delete — only Admins, and an unknown series is a 404', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const { body: leaderLogin } = await login('midleadera@test.local', 'MidLeadA123');
+  const { activityId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: today() });
+  const asLeader = await fetch(`${baseUrl}/api/recurring-tasks/${activityId}`, { method: 'DELETE', headers: authed(leaderLogin.token) });
+  assert.equal(asLeader.status, 403);
+  assert.ok(await db.prepare('SELECT id FROM recurring_activities WHERE id = ?').get(activityId), 'still there after a refused delete');
+  const missing = await fetch(`${baseUrl}/api/recurring-tasks/${uuid()}`, { method: 'DELETE', headers: authed(adminLogin.token) });
+  assert.equal(missing.status, 404);
+});
+
 test('recurring list — every series carries its parsed schedule, including old ones that only have a label', async () => {
   const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
   const legacyId = uuid();

@@ -313,4 +313,29 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   res.json({ recurring_task: { ...after, rule: parseRule(after) } });
 }));
 
+/** DELETE /api/recurring-tasks/:id — remove one person's recurring task for good, so nothing more is ever
+ *  generated from it. Every task it already created is kept — they're real work records that Team Tasks,
+ *  History, the dashboards and the audit trail still point at — and just unlinked from the deleted series
+ *  (recurring_activity_id → NULL), keeping their Recurring type. An open one can still be deleted on its
+ *  own from Team Tasks. One transaction, so the audit entry, the unlinking and the delete land together. */
+router.delete('/:id', asyncHandler(async (req, res) => {
+  const series = await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(req.params.id);
+  if (!series) return res.status(404).json({ error: 'Recurring task not found.' });
+  const owner = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(series.employee_id);
+  const kept = (await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(series.id)).c;
+
+  await db.transaction(async () => {
+    await recordAudit({
+      tableName: 'recurring_activities', recordId: series.id, fieldName: 'deleted',
+      oldValue: `${series.title} (${series.frequency || 'recurring'})`,
+      changedBy: req.user.id, changedByName: req.user.full_name,
+      reason: kept ? `${kept} task${kept === 1 ? '' : 's'} it already created ${kept === 1 ? 'was' : 'were'} kept` : null,
+      ownerId: series.employee_id, ownerName: owner?.full_name || null,
+    });
+    await db.prepare('UPDATE commitments SET recurring_activity_id = NULL WHERE recurring_activity_id = ?').run(series.id);
+    await db.prepare('DELETE FROM recurring_activities WHERE id = ?').run(series.id);
+  });
+  res.json({ ok: true, tasks_kept: kept });
+}));
+
 export default router;

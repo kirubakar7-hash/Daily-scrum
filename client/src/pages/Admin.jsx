@@ -1218,6 +1218,12 @@ function RecurringTasksTab() {
     }
   }
 
+  // Throws on failure so the row's Delete control shows the error right where it was clicked.
+  async function removeSeries(item) {
+    await api.del(`/recurring-tasks/${item.id}`);
+    load();
+  }
+
   async function togglePause(item) {
     await api.patch(`/recurring-tasks/${item.id}`, { is_active: item.is_active ? 0 : 1 });
     load();
@@ -1321,9 +1327,14 @@ function RecurringTasksTab() {
           emptyTitle="Nothing created yet"
           emptyBody="Build one above."
           rowActionsLabel=""
-          rowActionsWidth={120}
+          rowActionsWidth={170}
           renderRowActions={(r) => (
-            <RowControls toggleLabel={r.is_active ? 'Pause' : 'Resume'} onToggle={() => togglePause(r)}>
+            <RowControls
+              toggleLabel={r.is_active ? 'Pause' : 'Resume'}
+              onToggle={() => togglePause(r)}
+              confirmLabel="Delete? Tasks already created are kept."
+              onDelete={() => removeSeries(r)}
+            >
               <button type="button" className={LINK_BUTTON} onClick={() => setEditing(r)}>Edit</button>
             </RowControls>
           )}
