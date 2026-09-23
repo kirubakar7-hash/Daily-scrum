@@ -3,19 +3,15 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatBusinessDate } from '../lib/businessDate';
 import { useDataTable } from '../lib/useDataTable';
-import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationSearch, Input, Select, humanize } from '../components/ui';
+import { Badge, Button, Card, EmptyState, ErrorBanner, IllustrationSearch, Input, humanize } from '../components/ui';
 import DataTable, { DataTableView } from '../components/DataTable';
 import HelpBanner from '../components/HelpBanner';
 import {
   History as HistoryIcon,
-  Filter,
-  Download,
-  XCircle,
   Users,
   ClipboardList,
   ListChecks,
   Search,
-  Check,
 } from 'lucide-react';
 
 const EMPTY_FILTERS = { date_from: '', date_to: '', type: '', status: '', main_task_id: '', task_activity_id: '', employee_id: '', team_id: '', priority: '' };
@@ -23,7 +19,6 @@ const TABS = [
   ['Browse', HistoryIcon],
   ['Search', Search],
 ];
-const PRIORITIES = ['Low', 'Medium', 'High'];
 const NO_ROWS = [];
 
 // DataTable's column config — the single source of truth for what Task Records shows, sorts, filters and
@@ -77,21 +72,6 @@ const SUMMARY_COLUMNS = [
   { key: 'adhoc', label: 'Ad-hoc', width: 110, value: (s) => s.adhoc_activities ?? 0, cellClassName: 'text-grey-600' },
 ];
 
-/** Splits CSV text into raw records without re-serializing any cell, so a kept row stays byte-identical to
- *  what the server sent. A description can hold a newline inside its quotes, so a plain split('\n') would
- *  break a record in two; an escaped "" toggles twice, which leaves the quote state unchanged. */
-function csvRecords(text) {
-  const records = [];
-  let start = 0;
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '"') inQuotes = !inQuotes;
-    else if (text[i] === '\n' && !inQuotes) { records.push(text.slice(start, i)); start = i + 1; }
-  }
-  if (start < text.length) records.push(text.slice(start));
-  return records;
-}
-
 /** Reads whichever of EMPTY_FILTERS' keys are present in the URL — this is what makes a Dashboard KPI's
  *  "?status=support_required"-style drill-down link actually land pre-filtered instead of on a blank page. */
 function filtersFromSearchParams(searchParams) {
@@ -106,13 +86,9 @@ function filtersFromSearchParams(searchParams) {
 export default function History() {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get('tab') === 'search' ? 'Search' : 'Browse');
-  const [filters, setFilters] = useState(() => filtersFromSearchParams(searchParams));
+  const [filters] = useState(() => filtersFromSearchParams(searchParams));
   const [summary, setSummary] = useState(null);
   const [commitments, setCommitments] = useState(null);
-  const [mainTasks, setMainTasks] = useState([]);
-  const [taskActivities, setTaskActivities] = useState([]);
-  const [teams, setTeams] = useState([]);
-  const [employeeOptions, setEmployeeOptions] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [commitmentsTruncated, setCommitmentsTruncated] = useState(false);
   const table = useDataTable(commitments ?? NO_ROWS, RECORD_COLUMNS, {
@@ -129,56 +105,8 @@ export default function History() {
 
   useEffect(() => {
     query(filtersFromSearchParams(searchParams));
-    api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
-    api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => {});
-    api.get('/teams').then((d) => setTeams(d.teams.filter((t) => t.is_active))).catch(() => {});
-    // Unfiltered, fetched once — so the Employee filter's own option list doesn't collapse to whoever
-    // the current filter selection happens to include.
-    api.get('/history/summary').then((d) => setEmployeeOptions(d.summary)).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  function clearFilters() {
-    setFilters(EMPTY_FILTERS);
-    table.clearFilters();
-    query(EMPTY_FILTERS);
-  }
-
-  const [exported, setExported] = useState(false);
-
-  function exportCsv() {
-    const params = new URLSearchParams();
-    Object.entries(filters).forEach(([k, v]) => v && params.set(k, v));
-    const token = localStorage.getItem('dsm_token');
-    setLoadError('');
-    fetch(`/api/history/export.csv?${params}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => {
-        // fetch() only rejects on a network-level failure — a 401/500 still resolves here, and without
-        // this check the JSON error body would get downloaded and named scrum-history.csv as if it had
-        // succeeded, instead of surfacing the actual error.
-        if (!res.ok) throw new Error(`Export failed (${res.status}).`);
-        if (!table.anyFilterActive) return res.blob();
-        // Column filters and the search box are applied in the browser, so keep the server's own file
-        // (same columns, same formula-injection escaping) and drop just the records the table isn't
-        // showing, matched on Code.
-        return res.text().then((text) => {
-          const [header, ...rows] = csvRecords(text);
-          const shown = new Set(table.rows.map((c) => c.code));
-          const kept = rows.filter((r) => shown.has(r.match(/^"([^"]*)"/)?.[1]));
-          return new Blob([[header, ...kept].join('\n')], { type: 'text/csv' });
-        });
-      })
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'scrum-history.csv';
-        a.click();
-        setExported(true);
-        setTimeout(() => setExported(false), 2000);
-      })
-      .catch((e) => setLoadError(e.message || "Couldn't export History."));
-  }
 
   return (
     <div className="space-y-5">
@@ -209,67 +137,12 @@ export default function History() {
 
       {tab === 'Browse' && (
         <>
-          <Card className="animate-fade-in-up">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-grey-500 mb-3 uppercase tracking-wide">
-              <Filter className="w-3.5 h-3.5" />
-              Show me
+          {loadError && (
+            <div>
+              <ErrorBanner message={loadError} />
+              <Button size="sm" variant="secondary" className="mt-2" onClick={() => query()}>Retry</Button>
             </div>
-            <div className="grid sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              <Input label="From" type="date" value={filters.date_from} onChange={(e) => setFilters((f) => ({ ...f, date_from: e.target.value }))} />
-              <Input label="To" type="date" value={filters.date_to} onChange={(e) => setFilters((f) => ({ ...f, date_to: e.target.value }))} />
-              <Select label="Employee" value={filters.employee_id} onChange={(e) => setFilters((f) => ({ ...f, employee_id: e.target.value }))}>
-                <option value="">All employees</option>
-                {employeeOptions.map((e) => <option key={e.employee_id} value={e.employee_id}>{e.full_name}</option>)}
-              </Select>
-              <Select label="Team" value={filters.team_id} onChange={(e) => setFilters((f) => ({ ...f, team_id: e.target.value }))}>
-                <option value="">All teams</option>
-                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </Select>
-              <Select label="Work type" value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}>
-                <option value="">All types</option>
-                <option value="recurring">Recurring</option>
-                <option value="adhoc">Ad-hoc</option>
-              </Select>
-              <Select label="Status" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-                <option value="">All statuses</option>
-                <option value="pending">Pending</option>
-                <option value="in_progress">In Progress</option>
-                <option value="completed">Completed</option>
-                <option value="support_required">Support Required</option>
-                <option value="overdue">Overdue</option>
-              </Select>
-              <Select label="Process" value={filters.main_task_id} onChange={(e) => setFilters((f) => ({ ...f, main_task_id: e.target.value }))}>
-                <option value="">All Processes</option>
-                {mainTasks.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </Select>
-              <Select label="Activity" value={filters.task_activity_id} onChange={(e) => setFilters((f) => ({ ...f, task_activity_id: e.target.value }))}>
-                <option value="">All activities</option>
-                {taskActivities.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </Select>
-              <Select label="Priority" value={filters.priority} onChange={(e) => setFilters((f) => ({ ...f, priority: e.target.value }))}>
-                <option value="">All priorities</option>
-                {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
-              </Select>
-              <div className="flex items-end gap-2">
-                <Button onClick={() => query()} className="w-full sm:w-auto">Apply Filters</Button>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-4 mt-4 pt-3 border-t border-grey-100">
-              <button onClick={clearFilters} className="inline-flex items-center gap-1 text-xs font-medium text-grey-500 hover:text-grey-700 transition-colors">
-                <XCircle className="w-3.5 h-3.5" /> Clear Filters
-              </button>
-              <button onClick={exportCsv} className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-800 transition-colors press-scale">
-                <Download className="w-3.5 h-3.5" /> Export to CSV
-              </button>
-              {exported && (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 animate-scale-in">
-                  <Check className="w-3.5 h-3.5" /> Downloaded
-                </span>
-              )}
-            </div>
-            <ErrorBanner message={loadError} />
-            {loadError && <Button size="sm" variant="secondary" className="mt-2" onClick={() => query()}>Retry</Button>}
-          </Card>
+          )}
 
           <Card className="animate-fade-in-up" style={{ animationDelay: '80ms' }}>
               <div className="flex items-center gap-2 mb-1">
@@ -309,7 +182,7 @@ export default function History() {
             />
             {commitmentsTruncated && (
               <p className="text-xs text-grey-400 mt-2">
-                Showing the first {commitments.length} matching records{table.anyFilterActive ? ', and the table above only searches these' : ''} — narrow the date range or filters above to see the rest.
+                Showing the most recent {commitments.length} records{table.anyFilterActive ? ' — the search and column filters above only apply to these' : ''}.
               </p>
             )}
           </Card>
