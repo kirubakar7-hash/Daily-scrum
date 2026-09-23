@@ -31,19 +31,19 @@ const NO_ROWS = [];
 // for cells that need more than that raw text (a Badge, or Notes' badges-plus-reason). Type and Status
 // cells go through Badge, which humanizes, so their filter-list labels do too.
 const RECORD_COLUMNS = [
-  { key: 'code', label: 'Code', value: (c) => c.code || '', width: 130, minWidth: 110, cellClassName: 'font-mono text-xs text-grey-500 whitespace-nowrap' },
-  { key: 'date', label: 'Date', value: (c) => c.scrum_date || '', width: 110, cellClassName: 'text-grey-500 whitespace-nowrap' },
-  { key: 'employee', label: 'Employee', value: (c) => c.full_name || '', width: 140, cellClassName: 'font-semibold text-grey-800 whitespace-nowrap' },
+  { key: 'code', label: 'Code', value: (c) => c.code || '', width: 130, minWidth: 110, cellClassName: 'font-mono text-xs text-grey-500 truncate' },
+  { key: 'date', label: 'Date', value: (c) => c.scrum_date || '', width: 110, cellClassName: 'text-grey-500 truncate' },
+  { key: 'employee', label: 'Employee', value: (c) => c.full_name || '', width: 140, cellClassName: 'font-semibold text-grey-800 truncate' },
   { key: 'task', label: 'Task', value: (c) => c.description || '', width: 260, cellClassName: 'text-grey-800' },
   { key: 'type', label: 'Type', value: (c) => c.type || '', format: humanize, width: 110, render: (c) => <Badge tone={c.type}>{c.type}</Badge> },
-  { key: 'process', label: 'Process', value: (c) => c.main_task_name || '', width: 160, cellClassName: 'text-grey-600 whitespace-nowrap' },
-  { key: 'activity', label: 'Activity', value: (c) => c.task_activity_name || '', width: 160, cellClassName: 'text-grey-600 whitespace-nowrap' },
-  { key: 'reviewer', label: 'Reviewer', value: (c) => c.reviewer_name || '', width: 130, cellClassName: 'text-grey-600 whitespace-nowrap' },
+  { key: 'process', label: 'Process', value: (c) => c.main_task_name || '', width: 160, cellClassName: 'text-grey-600 truncate' },
+  { key: 'activity', label: 'Activity', value: (c) => c.task_activity_name || '', width: 160, cellClassName: 'text-grey-600 truncate' },
+  { key: 'reviewer', label: 'Reviewer', value: (c) => c.reviewer_name || '', width: 130, cellClassName: 'text-grey-600 truncate' },
   {
     key: 'status', label: 'Status', width: 140, order: ['pending', 'in_progress', 'support_required', 'completed'],
     value: (c) => c.status || '', format: humanize, render: (c) => <Badge tone={c.status}>{humanize(c.status)}</Badge>,
   },
-  { key: 'completed', label: 'Completed', value: (c) => (c.completed_at ? formatBusinessDate(c.completed_at) : ''), width: 110, cellClassName: 'text-grey-500 whitespace-nowrap' },
+  { key: 'completed', label: 'Completed', value: (c) => (c.completed_at ? formatBusinessDate(c.completed_at) : ''), width: 110, cellClassName: 'text-grey-500 truncate' },
   {
     key: 'notes', label: 'Notes', width: 240, sortable: false, filterable: false, cellClassName: 'max-w-[240px]',
     value: (c) => c.non_completion_reason || c.remarks || '',

@@ -193,7 +193,9 @@ export function DataTableView({
                   style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
                 >
                   {table.visibleColumns.map((col) => (
-                    <td key={col.key} className={`py-2.5 pr-4 ${alignClass(col.align)} ${col.cellClassName || 'text-grey-700'}`}>
+                    // overflow-hidden is load-bearing under table-fixed: without it, a nowrap cell whose
+                    // text is wider than its column visually bleeds into the next cell instead of clipping.
+                    <td key={col.key} className={`py-2.5 pr-4 overflow-hidden ${alignClass(col.align)} ${col.cellClassName || 'text-grey-700'}`}>
                       {col.render ? col.render(row) : (col.value(row) || <EmptyCell />)}
                     </td>
                   ))}
