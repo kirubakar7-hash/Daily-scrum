@@ -1,0 +1,51 @@
+# Nightly encrypted database backup — see BACKUP.md.
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   DATABASE_URL       the same value as in Vercel
+#   BACKUP_PASSPHRASE  a long passphrase you keep safe; without it the backups can't be opened
+# The repository is public, so each backup is encrypted before it is uploaded.
+name: Nightly database backup
+
+on:
+  schedule:
+    - cron: '30 20 * * *' # 20:30 UTC = 02:00 IST; GitHub may start scheduled runs a little late
+  workflow_dispatch: # "Run workflow" button, for a backup on demand
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        working-directory: server
+        run: npm ci --omit=dev
+
+      - name: Back up (encrypted)
+        working-directory: server
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::Add the DATABASE_URL and BACKUP_PASSPHRASE repository secrets (see BACKUP.md)."
+            exit 1
+          fi
+          node scripts/backup.js "../backup/daily-scrum-$(date -u +%F).dsmb"
+          BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" node scripts/restore.js "../backup/daily-scrum-$(date -u +%F).dsmb" --check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daily-scrum-backup-${{ github.run_number }}
+          path: backup/*.dsmb
+          retention-days: 30
+          if-no-files-found: error

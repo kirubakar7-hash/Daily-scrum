@@ -1,78 +1,87 @@
 # Backing up and restoring Daily Scrum Monitoring
 
-## Why this exists
+## How it works
 
-The production database is one SQLite file on a single Railway volume. Nothing
-backs it up automatically today — losing that volume means losing every team,
-task, and history record permanently. This is the highest-priority reliability
-gap identified in the September 2026 audit (see `CLAUDE.md` §21).
+The data lives in a Neon Postgres database. Neon's Free plan keeps only **6 hours** of restore history, so
+anything older can't be recovered from Neon itself. To cover that, a GitHub Actions workflow
+(`.github/workflows/backup.yml`) takes a full backup **every night at about 02:00 IST** and keeps each one
+for **30 days**.
 
-## Manual backup (do this regularly until automation is set up)
+- Every table is copied in one consistent, read-only snapshot — the app keeps working while it runs.
+- Each backup is **encrypted** (AES-256) with a passphrase only you hold. The GitHub repository is public,
+  so the backup files can be downloaded by others — without the passphrase they are unreadable.
+- Right after taking it, the workflow opens the backup again to prove it isn't damaged. A failed backup
+  shows as a red ✗ on the repository's **Actions** tab, and GitHub emails the repository owner.
 
-From the project folder:
+## One-time setup (you do this — it needs your secrets)
+
+1. Choose a long passphrase (at least 12 characters; a sentence of 4–5 random words works well) and save it
+   in your password manager. **If it is lost, no backup can ever be opened.**
+2. On GitHub, open the repository → **Settings** → **Secrets and variables** → **Actions** →
+   **New repository secret**, and add:
+   - `DATABASE_URL` — copy the value from Vercel → Project → Settings → Environment Variables.
+   - `BACKUP_PASSPHRASE` — the passphrase from step 1.
+3. Open the **Actions** tab → **Nightly database backup** → **Run workflow** once, and check it ends with a
+   green ✓. From then on it runs by itself every night.
+
+GitHub pauses scheduled workflows in a public repository after **60 days without any commits**. If the
+project goes quiet for that long, re-enable the workflow on the Actions tab.
+
+## Getting a backup
+
+Actions tab → **Nightly database backup** → pick a run → **Artifacts** → download
+`daily-scrum-backup-…`. It downloads as a zip; inside is one `daily-scrum-YYYY-MM-DD.dsmb` file.
+
+To check a backup opens and see what it contains (no database needed), from the `server` folder:
 
 ```powershell
-railway volume files --volume e59788d2-3cb0-4986-a471-67f1b26195b0 download /scrum.db "backups/scrum-<date>.db"
+$env:BACKUP_PASSPHRASE = "your passphrase"
+node scripts/restore.js path\to\daily-scrum-2026-09-24.dsmb --check
 ```
 
-Replace `<date>` with today's date (e.g. `scrum-2026-09-15.db`). Keep several
-dated copies, not just the latest one — if a bad write corrupts the live
-database, you want a backup from *before* that happened, not just the most
-recent one.
-
-**A backup isn't a real backup until it's been test-restored.** After
-downloading, sanity-check it:
+You can also take a backup yourself at any time (reads `DATABASE_URL` from `server/.env`):
 
 ```powershell
-node -e "const {DatabaseSync}=require('node:sqlite'); const db=new DatabaseSync('backups/scrum-<date>.db',{readOnly:true}); console.log('users:', db.prepare('SELECT COUNT(*) c FROM users').get().c);"
+$env:BACKUP_PASSPHRASE = "your passphrase"
+node scripts/backup.js backups\daily-scrum-manual.dsmb
 ```
 
-If that prints a sensible user count, the backup is good.
+## Restoring
 
-## Restoring from a backup
+A restore only ever goes into a **new, empty** database — never over the live one. The restore script
+refuses any database that already has users or tasks, and it uses its own setting
+(`RESTORE_DATABASE_URL`) so it can't pick up the production address by accident.
 
-1. Stop the Railway service (or accept brief downtime during the swap).
-2. Upload the backup file over the live one:
+1. In the Neon console, create a new empty database (or a new project) and copy its connection string.
+2. From the `server` folder:
    ```powershell
-   railway volume files --volume e59788d2-3cb0-4986-a471-67f1b26195b0 upload "backups/scrum-<date>.db" "/scrum.db" --overwrite
+   $env:BACKUP_PASSPHRASE = "your passphrase"
+   $env:RESTORE_DATABASE_URL = "the NEW database's connection string"
+   node scripts/restore.js path\to\daily-scrum-2026-09-24.dsmb
    ```
-3. Also overwrite `/scrum.db-wal` and `/scrum.db-shm` with matching empty
-   files (a stale WAL from the old data can override your restored file's
-   contents otherwise — this bit us once already during initial setup):
-   ```powershell
-   node -e "require('fs').writeFileSync('backups/empty.db-wal','')"
-   railway volume files --volume e59788d2-3cb0-4986-a471-67f1b26195b0 upload "backups/empty.db-wal" "/scrum.db-wal" --overwrite
-   ```
-4. Restart the service:
-   ```powershell
-   railway restart --service daily-scrum-monitoring
-   ```
-5. Log in and verify: check the Dashboard's user count matches what you
-   expect, spot-check a few real records in History.
+   It creates the tables, loads every row in one step (all or nothing), and prints how many rows each
+   table received.
+3. In Vercel → Settings → Environment Variables, change `DATABASE_URL` to the new database's connection
+   string, then redeploy.
+4. Log in and check: the users, recent tasks and recurring tasks you expect are there.
 
-## Disaster recovery checklist
+The old database is left untouched throughout, so switching back is just a matter of restoring the old
+`DATABASE_URL`.
 
-**Application won't load / is down:**
-1. Check `railway logs --latest` for errors.
-2. Check Railway's own status page for a platform-wide outage.
-3. `railway restart --service daily-scrum-monitoring`.
+## If something goes wrong
 
-**Data looks wrong / corrupted:**
-1. Stop writes immediately — tell everyone to stop using the app.
-2. Identify the most recent backup you're confident is good.
-3. Restore it following the steps above.
-4. Verify thoroughly before telling people to resume using the app.
-5. Note what happened and when, so the cause can be investigated later.
+**Data looks wrong or was deleted by mistake:**
+1. Ask everyone to stop using the app.
+2. If it happened within the last 6 hours, Neon's own restore (console → Branches → Restore) is fastest.
+3. Otherwise pick the latest nightly backup from *before* the problem and follow **Restoring** above.
+4. Check thoroughly before telling people to carry on.
 
-## Known limitation — read this honestly
+**App is down:** check the Vercel dashboard (Deployments, Logs) and Neon's status — a Free-plan database
+is suspended, not deleted, if it runs out of its monthly allowance.
 
-This is a **manual** process right now, not automatic. Per the project's own
-charter (`CLAUDE.md` §21): "Do NOT claim automated disaster recovery if it
-does not exist." It doesn't exist yet. A backup only exists if someone
-actually runs the command above and keeps the file somewhere safe — ideally
-not only on the same computer as everything else.
+## Honest limits
 
-The real fix is a scheduled, automatic backup that runs on its own (e.g. a
-GitHub Actions workflow on a cron schedule, since that's free and doesn't
-depend on any one computer being on). That requires a GitHub account for this
-project, which doesn't exist yet — worth setting up as the next step.
+- Backups are nightly, so anything entered after the last one (up to a day) is only covered by Neon's
+  6-hour history.
+- Each backup is kept 30 days.
+- Everything above depends on the two secrets being set. Until then, **no automatic backup runs**.
