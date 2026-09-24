@@ -107,8 +107,17 @@ export async function generateDueOccurrences({ now } = {}) {
   const date = now ? getBusinessDate(now) : today();
   const log = (msg) => console.log(`[Recurring Scheduler] ${msg}`);
   log(`Started — business date ${date}`);
-  const activities = await db.prepare('SELECT * FROM recurring_activities WHERE is_active = 1').all();
-  log(`Active series found: ${activities.length}`);
+  // Series for someone who has been deactivated are skipped, not paused: nobody could work or close those
+  // tasks, and reactivating the person picks the series straight back up from the current date.
+  const activities = await db.prepare(`
+    SELECT ra.* FROM recurring_activities ra JOIN users u ON u.id = ra.employee_id
+    WHERE ra.is_active = 1 AND u.is_active = 1
+  `).all();
+  const skipped = (await db.prepare(`
+    SELECT COUNT(*) c FROM recurring_activities ra JOIN users u ON u.id = ra.employee_id
+    WHERE ra.is_active = 1 AND u.is_active = 0
+  `).get()).c;
+  log(`Active series found: ${activities.length}${skipped ? ` (${skipped} skipped — assigned person is deactivated)` : ''}`);
   let created = 0;
   let ended = 0;
   let failed = 0;

@@ -18,6 +18,10 @@ if (!process.env.DATABASE_URL) {
 pg.types.setTypeParser(20, (val) => parseInt(val, 10));
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+// Neon closes idle connections (its compute pauses when the app is quiet). pg drops the broken client from
+// the pool by itself and opens a fresh one on the next query — but it also emits 'error', and an 'error'
+// event with no listener is an uncaught exception that kills the whole server process. Log it instead.
+pool.on('error', (err) => console.error(`[DB] Idle database connection closed: ${err.message}`));
 
 // Route-code call sites are written as `db.prepare(sql).run(...params)` against SQLite's `?` positional
 // placeholders (better-sqlite3-style), and many embed SQLite's datetime('now'[, offset]) function inline

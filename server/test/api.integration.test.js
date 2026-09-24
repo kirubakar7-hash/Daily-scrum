@@ -1561,6 +1561,73 @@ test('recurring delete — only Admins, and an unknown series is a 404', async (
   assert.equal(missing.status, 404);
 });
 
+test('scrum resolve — completing an old overdue task does not recreate the dates the scheduler skipped', async () => {
+  const { activityId, commitmentId: oldId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(10) });
+  await generateDueOccurrences(); // catch-up: creates today's task only, skipping the 9 days in between
+  assert.deepEqual((await db.prepare('SELECT due_date FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId)).map((r) => r.due_date), [daysAgo(10), today()]);
+
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const res = await fetch(`${baseUrl}/api/scrum/commitments/${oldId}/resolve`, { method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({ status: 'completed' }) });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.series_ended, false);
+  assert.equal(body.next_occurrence?.due_date, today(), 'the next task is the one already lined up for today');
+
+  const after = (await db.prepare('SELECT due_date FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId)).map((r) => r.due_date);
+  assert.deepEqual(after, [daysAgo(10), today()], `no task for a skipped date (${daysAgo(9)}) may be created`);
+  assert.equal((await db.prepare('SELECT occurrences_created FROM recurring_activities WHERE id = ?').get(activityId)).occurrences_created, 2);
+});
+
+test('recurring generation — a deactivated person gets no new recurring tasks; reactivating them resumes it', async () => {
+  const personId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, is_active) VALUES (?, 'Left The Company', 'left@test.local', ?, 'employee', 0)`)
+    .run(personId, bcrypt.hashSync('LeftPass123', 10));
+  const { activityId } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(2), employeeId: personId });
+
+  await generateDueOccurrences();
+  assert.equal((await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ?').get(activityId)).c, 1, 'nothing new for someone who is deactivated');
+  assert.equal((await db.prepare('SELECT is_active FROM recurring_activities WHERE id = ?').get(activityId)).is_active, 1, 'the series itself is left as it was, not paused or ended');
+
+  await db.prepare('UPDATE users SET is_active = 1 WHERE id = ?').run(personId);
+  await generateDueOccurrences();
+  const dues = (await db.prepare('SELECT due_date FROM commitments WHERE recurring_activity_id = ? ORDER BY due_date').all(activityId)).map((r) => r.due_date);
+  assert.deepEqual(dues, [daysAgo(2), today()], 'once reactivated, the series picks up again from today');
+});
+
+test('scrum create — a task cannot be attached to someone else\'s recurring series', async () => {
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const { activityId: othersSeries } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: today(), employeeId: ids.reportBId });
+  const { activityId: ownSeries } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(1) });
+  const create = (recurringActivityId, description) => fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: authed(reportALogin.token),
+    body: JSON.stringify({
+      description, type: 'recurring', due_date: today(), employee_id: ids.reportAId, recurring_activity_id: recurringActivityId,
+      category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId,
+    }),
+  });
+
+  const hijack = await create(othersSeries, 'Hijack attempt');
+  assert.equal(hijack.status, 400, 'another person\'s series is refused');
+  assert.equal((await db.prepare(`SELECT COUNT(*) c FROM commitments WHERE description = 'Hijack attempt'`).get()).c, 0);
+
+  const madeUp = await create(uuid(), 'Made-up series');
+  assert.equal(madeUp.status, 400, 'a series that does not exist is a clear 400, not a server error');
+
+  const own = await create(ownSeries, 'Daily status update');
+  assert.equal(own.status, 201, 'their own series is still fine');
+});
+
+test('recurring API — a Leader can be assigned a recurring task, not silently skipped', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const res = await fetch(`${baseUrl}/api/recurring-tasks`, {
+    method: 'POST', headers: authed(adminLogin.token),
+    body: JSON.stringify({ title: 'Leader weekly review', employee_ids: [ids.midLeaderAId, ids.reportAId], category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId }),
+  });
+  assert.equal(res.status, 201);
+  const { recurring_tasks: created } = await res.json();
+  assert.deepEqual(created.map((s) => s.employee_id).sort(), [ids.midLeaderAId, ids.reportAId].sort(), 'both the Leader and the Employee get their own copy');
+});
+
 test('recurring list — every series carries its parsed schedule, including old ones that only have a label', async () => {
   const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
   const legacyId = uuid();

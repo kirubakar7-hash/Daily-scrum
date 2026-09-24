@@ -94,8 +94,9 @@ async function createRecurringTask(b, req) {
   const created = await db.transaction(async () => {
     const rows = [];
     for (const employeeId of b.employee_ids) {
-      const employee = await db.prepare("SELECT id, full_name, manager_id FROM users WHERE id = ? AND is_active = 1 AND role = 'employee'").get(employeeId);
-      if (!employee) continue; // skip silently — a deactivated/removed/non-employee person shouldn't block the rest of the assignment
+      // Employees and Leaders both carry their own tasks (the form offers both, and Edit accepts both).
+      const employee = await db.prepare("SELECT id, full_name, manager_id FROM users WHERE id = ? AND is_active = 1 AND role IN ('employee', 'leader')").get(employeeId);
+      if (!employee) continue; // skip silently — a deactivated/removed person shouldn't block the rest of the assignment
       const reviewerId = explicitReviewerId !== undefined ? explicitReviewerId : (employee.manager_id || null);
 
       const activityId = uuid();

@@ -183,7 +183,15 @@ router.post('/commitments', asyncHandler(async (req, res) => {
     if (err) return res.status(400).json({ error: err });
   }
 
-  let recurringActivityId = b.recurring_activity_id || null;
+  // Only a recurring task links to a series, and only to one of this same person's series — otherwise
+  // completing it would line up the next task on someone else's list.
+  let recurringActivityId = type === 'recurring' ? (b.recurring_activity_id || null) : null;
+  if (recurringActivityId) {
+    const series = await db.prepare('SELECT employee_id FROM recurring_activities WHERE id = ?').get(recurringActivityId);
+    if (!series || series.employee_id !== employeeId) {
+      return res.status(400).json({ error: "That recurring task doesn't belong to this person." });
+    }
+  }
   let seriesFirstDue = null;
   if (type === 'recurring' && !recurringActivityId) {
     const existing = await db.prepare('SELECT id FROM recurring_activities WHERE employee_id = ? AND lower(title) = lower(?)').get(employeeId, b.description.trim());
@@ -451,7 +459,15 @@ router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
   let seriesEnded = false;
   if (b.status === 'completed' && before.type === 'recurring' && before.recurring_activity_id) {
     const activity = await db.prepare('SELECT * FROM recurring_activities WHERE id = ? AND is_active = 1').get(before.recurring_activity_id);
-    if (activity) {
+    // An older, overdue task being finished late: the daily scheduler has already lined up a later one
+    // (skipping any missed dates in between on purpose), so there's nothing new to create — and working
+    // forward from this old date would bring back exactly the dates the scheduler skipped.
+    const latest = activity && await db.prepare(
+      'SELECT * FROM commitments WHERE recurring_activity_id = ? AND is_active = 1 ORDER BY due_date DESC, created_at DESC LIMIT 1'
+    ).get(activity.id);
+    if (latest && latest.due_date > (before.due_date || '')) {
+      nextTask = latest;
+    } else if (activity) {
       const nextDate = nextOccurrence(before.due_date || today(), activity);
       if (!nextDate) {
         // The series has run its course (its end date/occurrence count was reached) — stop repeating it.
