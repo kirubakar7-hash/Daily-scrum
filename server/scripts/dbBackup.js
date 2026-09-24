@@ -15,6 +15,57 @@ export function checkPassphrase(passphrase) {
   if (!passphrase || passphrase.length < 12) {
     throw new Error('BACKUP_PASSPHRASE must be set and at least 12 characters long.');
   }
+  // These names are printed in the public workflow file — as a passphrase, anyone could guess them.
+  if (['BACKUP_PASSPHRASE', 'DATABASE_URL'].includes(passphrase.trim())) {
+    throw new Error('BACKUP_PASSPHRASE is set to a secret\'s name instead of a real passphrase. Choose a long, private passphrase.');
+  }
+}
+
+/** The connection string from a pasted secret, with the usual copy-paste slips (surrounding spaces or
+ *  quotes, a leading "DATABASE_URL=") tidied up. Anything else wrong is reported without echoing the value,
+ *  since this runs in public workflow logs. */
+export function resolveDatabaseUrl(raw) {
+  let value = (raw || '').trim();
+  if (!value) throw new Error('DATABASE_URL is not set.');
+  if (/[\r\n]/.test(value)) {
+    throw new Error('DATABASE_URL has more than one line in it. It must hold only the connection string (one line, starting with postgresql://).');
+  }
+  value = value.replace(/^DATABASE_URL\s*=\s*/, '').replace(/^(['"])(.*)\1$/, '$2').trim();
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('DATABASE_URL is not a valid connection string. It should look like postgresql://user:password@host/database?sslmode=require.');
+  }
+  if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname) {
+    throw new Error(`DATABASE_URL must be a PostgreSQL connection string (postgresql://…), not ${url.protocol.replace(':', '')}.`);
+  }
+  return value;
+}
+
+/** Hides the parts of a connection string that must never reach a (public) log. */
+export function scrubber(connectionString) {
+  const url = new URL(connectionString);
+  const hide = [url.password, decodeURIComponent(url.password), url.username, url.hostname].filter((v) => v && v.length > 2);
+  return (message) => hide.reduce((m, v) => m.split(v).join('***'), String(message));
+}
+
+/** Connects, retrying a few times: Neon's Free plan suspends the database when idle, and a nightly run is
+ *  often the first connection in hours. */
+export async function connectWithRetry(makeClient, { attempts = 4, delayMs = 10_000, log = console.log, scrub = (m) => m } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    const client = makeClient();
+    try {
+      await client.connect();
+      return client;
+    } catch (e) {
+      await client.end().catch(() => {});
+      const reason = scrub(e.message);
+      if (attempt >= attempts) throw new Error(`Could not connect to the database after ${attempts} tries: ${reason}`);
+      log(`Database not reachable yet (${reason}) — retrying in ${delayMs / 1000}s (${attempt}/${attempts})`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
 }
 
 export function encrypt(plain, passphrase) {

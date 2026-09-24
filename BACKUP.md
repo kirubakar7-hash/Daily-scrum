@@ -18,9 +18,12 @@ for **30 days**.
 1. Choose a long passphrase (at least 12 characters; a sentence of 4–5 random words works well) and save it
    in your password manager. **If it is lost, no backup can ever be opened.**
 2. On GitHub, open the repository → **Settings** → **Secrets and variables** → **Actions** →
-   **New repository secret**, and add:
-   - `DATABASE_URL` — copy the value from Vercel → Project → Settings → Environment Variables.
-   - `BACKUP_PASSPHRASE` — the passphrase from step 1.
+   **New repository secret**, and add **two separate secrets** — one name and one value each:
+   - Name `DATABASE_URL`, value: **only** the connection string, on one line, starting with
+     `postgresql://`. Get it from the Neon console → your project → **Connect** (Vercel may not show the
+     value of a sensitive variable). Don't include the name, quotes, or anything else.
+   - Name `BACKUP_PASSPHRASE`, value: the passphrase from step 1 (not the word BACKUP_PASSPHRASE).
+   The workflow checks both and says exactly which one is missing or malformed — without ever showing them.
 3. Open the **Actions** tab → **Nightly database backup** → **Run workflow** once, and check it ends with a
    green ✓. From then on it runs by itself every night.
 

@@ -1,8 +1,9 @@
 # Nightly encrypted database backup — see BACKUP.md.
 # Needs two repository secrets (Settings → Secrets and variables → Actions):
-#   DATABASE_URL       the same value as in Vercel
+#   DATABASE_URL       only the connection string (one line, postgresql://…) — the same database as Vercel
 #   BACKUP_PASSPHRASE  a long passphrase you keep safe; without it the backups can't be opened
-# The repository is public, so each backup is encrypted before it is uploaded.
+# The repository is public, so each backup is encrypted before it is uploaded, and nothing here ever
+# prints a secret's value.
 name: Nightly database backup
 
 on:
@@ -13,10 +14,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: nightly-backup
+  cancel-in-progress: false
+
 jobs:
   backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -30,18 +35,25 @@ jobs:
         working-directory: server
         run: npm ci --omit=dev
 
+      - name: Check the secrets are set
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          missing=0
+          if [ -z "$DATABASE_URL" ]; then echo "::error::The DATABASE_URL repository secret is missing or empty (see BACKUP.md)."; missing=1; fi
+          if [ -z "$BACKUP_PASSPHRASE" ]; then echo "::error::The BACKUP_PASSPHRASE repository secret is missing or empty (see BACKUP.md)."; missing=1; fi
+          exit $missing
+
       - name: Back up (encrypted)
         working-directory: server
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
-          if [ -z "$DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
-            echo "::error::Add the DATABASE_URL and BACKUP_PASSPHRASE repository secrets (see BACKUP.md)."
-            exit 1
-          fi
-          node scripts/backup.js "../backup/daily-scrum-$(date -u +%F).dsmb"
-          BACKUP_PASSPHRASE="$BACKUP_PASSPHRASE" node scripts/restore.js "../backup/daily-scrum-$(date -u +%F).dsmb" --check
+          file="../backup/daily-scrum-$(date -u +%F).dsmb"
+          node scripts/backup.js "$file"
+          node scripts/restore.js "$file" --check
 
       - uses: actions/upload-artifact@v4
         with:
