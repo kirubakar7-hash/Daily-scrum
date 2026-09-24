@@ -8,6 +8,7 @@ import DataTable, { DataTableView } from '../components/DataTable';
 import { useDataTable } from '../lib/useDataTable';
 import RecurrencePicker, { DEFAULT_RULE } from '../components/RecurrencePicker';
 import ImportButton from '../components/ImportButton';
+import { activityImportFields, recurringImportFields, taskTypeImportFields, userImportFields } from '../lib/importFields';
 import { useAuth } from '../lib/AuthContext';
 
 // "Functions" (categories.js) is deliberately not a visible tab here — the org has exactly one Function
@@ -655,6 +656,7 @@ function ActivitiesTab() {
             entityLabel="Activities"
             headers={['name', 'main_task_name', 'description']}
             example={{ name: 'Bank Reconciliation', main_task_name: 'FP&A', description: '' }}
+            loadFields={activityImportFields}
             endpoint="/task-activities/import"
             onDone={load}
           />
@@ -802,6 +804,7 @@ function UsersTab() {
           entityLabel="Users"
           headers={['full_name', 'email', 'password', 'role', 'team_name', 'job_title']}
           example={{ full_name: 'Jane Doe', email: 'jane@company.com', password: 'TempPass123', role: 'employee', team_name: 'General Team', job_title: 'Accountant' }}
+          loadFields={userImportFields}
           endpoint="/users/import"
           onDone={load}
         />
@@ -987,6 +990,7 @@ function TaskTypesTab() {
             entityLabel="Task Types"
             headers={['name', 'mechanic']}
             example={{ name: 'Compliance Review', mechanic: 'adhoc' }}
+            loadFields={taskTypeImportFields}
             endpoint="/task-types/import"
             onDone={load}
           />
@@ -1282,6 +1286,7 @@ function RecurringTasksTab() {
           entityLabel="Recurring Tasks"
           headers={['title', 'employee_emails', 'task_type_name', 'main_task_name', 'activity_name', 'reviewer_email', 'priority', 'start_date', 'frequency']}
           example={{ title: 'Daily bank reconciliation', employee_emails: 'jane@company.com;alex@company.com', task_type_name: '', main_task_name: 'FP&A', activity_name: 'Bank Reconciliation', reviewer_email: '', priority: 'Medium', start_date: '2026-09-20', frequency: 'Daily' }}
+          loadFields={recurringImportFields}
           endpoint="/recurring-tasks/import"
           onDone={load}
         />

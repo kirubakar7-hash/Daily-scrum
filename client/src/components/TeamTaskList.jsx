@@ -13,6 +13,7 @@ import { badgeClassFor, Badge, Button, DeleteButton, ErrorBanner, humanize, Inpu
 import RecurrencePicker, { DEFAULT_RULE } from './RecurrencePicker';
 import InfoTip from './InfoTip';
 import ImportButton from './ImportButton';
+import { taskImportFields } from '../lib/importFields';
 import AuditTimeline from './AuditTimeline';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
@@ -291,6 +292,7 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
               entityLabel="Tasks"
               headers={['employee_email', 'description', 'task_type_name', 'main_task_name', 'activity_name', 'reviewer_email', 'priority', 'due_date']}
               example={{ employee_email: 'jane@company.com', description: 'Complete HDFC Bank Reconciliation for August 2026', task_type_name: '', main_task_name: 'FP&A', activity_name: 'Bank Reconciliation', reviewer_email: '', priority: 'Medium', due_date: '' }}
+              loadFields={() => taskImportFields(user)}
               endpoint="/scrum/commitments/import"
               onDone={() => load()}
             />
