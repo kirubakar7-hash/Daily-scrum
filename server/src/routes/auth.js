@@ -87,6 +87,25 @@ router.post('/change-password', requireAuth, asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Self-service profile — every role can change the name shown for them across the app. Only the name:
+// email and role stay Admin-only (Admin → Users), whatever else the request body carries.
+router.patch('/me', requireAuth, asyncHandler(async (req, res) => {
+  const raw = req.body?.full_name;
+  const fullName = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
+  if (!fullName) return res.status(400).json({ error: 'Please enter your name.' });
+  if (fullName.length > 100) return res.status(400).json({ error: 'Your name must be 100 characters or fewer.' });
+
+  if (fullName !== req.user.full_name) {
+    await db.prepare(`UPDATE users SET full_name=?, updated_at=datetime('now'), updated_by=? WHERE id=?`).run(fullName, req.user.id, req.user.id);
+    await recordAudit({
+      tableName: 'users', recordId: req.user.id, fieldName: 'full_name', oldValue: req.user.full_name, newValue: fullName,
+      changedBy: req.user.id, changedByName: fullName, ownerId: req.user.id, ownerName: fullName,
+    });
+  }
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: sanitize(user) });
+}));
+
 function sanitize(user) {
   const { password_hash, ...rest } = user;
   return { ...rest, role_label: ROLE_LABELS[rest.role] || rest.role };

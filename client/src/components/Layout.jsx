@@ -3,10 +3,11 @@ import { useAuth } from '../lib/AuthContext';
 import WelcomeBanner, { resetWelcomeBanner } from './WelcomeBanner';
 import GuidedTour from './GuidedTour';
 import ChangePasswordModal from './ChangePasswordModal';
+import ProfileModal from './ProfileModal';
 import { useState } from 'react';
 import {
   LayoutDashboard, History, ShieldCheck, ScrollText, ListTodo, Users,
-  HelpCircle, LogOut, Menu, X, KeyRound,
+  HelpCircle, LogOut, Menu, X, UserRound,
 } from 'lucide-react';
 import logoColor from '../assets/brand/solidpro_logo_color.png';
 
@@ -57,6 +58,7 @@ export default function Layout() {
   const [tourActive, setTourActive] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   if (!user) return null;
   const items = NAV_BY_ROLE[user.role] || [];
 
@@ -107,9 +109,9 @@ export default function Layout() {
               <LogOut className="w-5 h-5" />
             </button>
             <button
-              onClick={() => setChangePasswordOpen(true)}
+              onClick={() => setProfileOpen(true)}
               className="flex items-center gap-2 pl-2 border-l border-grey-100 rounded-xl hover:bg-grey-50 transition-colors py-1 pr-1"
-              title="Change Password"
+              title="My Profile"
             >
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-600 to-brand-800 text-white flex items-center justify-center text-xs font-bold shrink-0">
                 {initials(user.full_name)}
@@ -156,10 +158,10 @@ export default function Layout() {
                 <HelpCircle className="w-4 h-4" /> Help
               </button>
               <button
-                onClick={() => { setChangePasswordOpen(true); setMobileOpen(false); }}
+                onClick={() => { setProfileOpen(true); setMobileOpen(false); }}
                 className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-grey-600"
               >
-                <KeyRound className="w-4 h-4" /> Password
+                <UserRound className="w-4 h-4" /> Profile
               </button>
               <button onClick={logout} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-accent-600">
                 <LogOut className="w-4 h-4" /> Logout
@@ -173,6 +175,7 @@ export default function Layout() {
         <Outlet />
       </main>
       <GuidedTour role={user.role} active={tourActive} onFinish={() => setTourActive(false)} />
+      <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} onChangePassword={() => setChangePasswordOpen(true)} />
       <ChangePasswordModal open={changePasswordOpen} onClose={() => setChangePasswordOpen(false)} />
     </div>
   );

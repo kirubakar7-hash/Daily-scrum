@@ -273,6 +273,36 @@ test('scrum PATCH — an Admin cannot flip a task between Recurring and Ad-hoc v
   assert.equal(res.status, 400, 'an Ad-hoc task must not be switchable to a Recurring type through this general edit');
 });
 
+test('auth — every user can change their own name, and only their name', async () => {
+  const selfId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, 'Rename Me', 'renameme@test.local', ?, 'employee')`)
+    .run(selfId, bcrypt.hashSync('RenamePass123', 10));
+  const { body: session } = await login('renameme@test.local', 'RenamePass123');
+  const patchMe = (body, headers = authed(session.token)) => fetch(`${baseUrl}/api/auth/me`, { method: 'PATCH', headers, body: JSON.stringify(body) });
+
+  const ok = await patchMe({ full_name: '  Priya   Sharma ', role: 'super_admin', email: 'hijack@test.local' });
+  assert.equal(ok.status, 200);
+  const { user } = await ok.json();
+  assert.equal(user.full_name, 'Priya Sharma', 'trimmed, with inner spaces tidied');
+  assert.equal(user.role, 'employee', 'role cannot be changed this way');
+  assert.equal(user.email, 'renameme@test.local', 'email cannot be changed this way');
+  assert.equal(user.password_hash, undefined, 'the password hash is never sent back');
+
+  const me = await (await fetch(`${baseUrl}/api/auth/me`, { headers: authed(session.token) })).json();
+  assert.equal(me.user.full_name, 'Priya Sharma', 'the new name is what the app shows from now on');
+  const stored = await db.prepare('SELECT full_name, role, email FROM users WHERE id = ?').get(selfId);
+  assert.deepEqual(stored, { full_name: 'Priya Sharma', role: 'employee', email: 'renameme@test.local' });
+
+  const audit = await db.prepare(`SELECT old_value, new_value, changed_by FROM audit_logs WHERE record_id = ? AND field_name = 'full_name'`).get(selfId);
+  assert.deepEqual(audit, { old_value: 'Rename Me', new_value: 'Priya Sharma', changed_by: selfId });
+
+  assert.equal((await patchMe({ full_name: '   ' })).status, 400, 'a blank name is refused');
+  assert.equal((await patchMe({ full_name: 'x'.repeat(101) })).status, 400, 'an over-long name is refused');
+  assert.equal((await patchMe({})).status, 400);
+  assert.equal((await patchMe({ full_name: 'Nobody' }, { 'Content-Type': 'application/json' })).status, 401, 'signed-out requests are rejected');
+  assert.equal((await db.prepare('SELECT full_name FROM users WHERE id = ?').get(selfId)).full_name, 'Priya Sharma', 'nothing refused was saved');
+});
+
 test('auth — self-service change-password works for any role, rejects a wrong current password, and revokes the old session', async () => {
   // A dedicated throwaway account — mutating the shared 'employee@test.local' seeded account here would
   // break every later test that still logs in with its original password.
