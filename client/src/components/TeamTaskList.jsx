@@ -307,9 +307,10 @@ export default function TeamTaskList({ assignees: assigneesProp, readOnly, date 
         <Modal open={showForm} onClose={() => setShowForm(false)} title="Create Task" wide>
           <CreateTaskForm
             assignees={assignees}
-            onCreated={() => {
+            onCreated={(assignedTo) => {
               setShowForm(false);
-              load();
+              // A task for someone else lands on THEIR list, not this one — say where it went.
+              load(assignedTo ? `Task created for ${assignedTo} — it's in their My Tasks, and you can follow it in Team Tasks.` : undefined);
             }}
           />
         </Modal>
@@ -657,14 +658,14 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
     }).catch(() => setLoadError("Couldn't load Task Types — try closing and reopening this form."));
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => setLoadError("Couldn't load Processes — try closing and reopening this form."));
     api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => setLoadError("Couldn't load Activities — try closing and reopening this form."));
-    api.get('/users').then((d) => setUsers(d.users)).catch(() => {});
+    api.get('/users/assignable').then((d) => setUsers(d.users)).catch(() => {});
   }, []);
 
   const selectedType = taskTypes.find((t) => t.id === taskTypeId);
   const isRecurring = selectedType?.mechanic === 'recurring';
   const activitiesForMainTask = taskActivities.filter((a) => !mainTaskId || a.main_task_id === mainTaskId);
   const selectedActivity = taskActivities.find((a) => a.id === taskActivityId);
-  const reviewers = users.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role) && u.is_active);
+  const reviewers = users.filter((u) => ['leader', 'admin', 'super_admin'].includes(u.role));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (taskActivityId && !activitiesForMainTask.some((a) => a.id === taskActivityId)) setTaskActivityId('');
@@ -707,7 +708,7 @@ function CreateTaskForm({ assignees: assigneesProp, onCreated }) {
         recurrence_rule: isRecurring ? recurrenceRule : undefined,
       });
       setDescription(''); setMainTaskId(''); setTaskActivityId('');
-      onCreated();
+      onCreated(employeeId === user.id ? null : users.find((u) => u.id === employeeId)?.full_name || 'them');
     } catch (e) {
       setError(e.message);
     } finally {

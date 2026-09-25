@@ -121,8 +121,13 @@ router.get('/my-tasks', asyncHandler(async (req, res) => {
 /** POST /api/scrum/commitments — "What will you complete today?" */
 router.post('/commitments', asyncHandler(async (req, res) => {
   const employeeId = targetEmployeeId(req);
-  if (!(await assertCanEdit(req, res, employeeId))) return;
-  if (!(await assertEmployeeExists(res, employeeId))) return;
+  // Anyone (except read-only Senior Management) can assign a new task to any active person. Once it
+  // exists, the task is the assignee's: only they, their managers and Admins can change it — every
+  // other route below still goes through assertCanEdit. The creator can view it (canViewTask).
+  if (isReadOnly(req.user)) return res.status(403).json({ error: 'Your role has read-only access.' });
+  if (!(await db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(employeeId))) {
+    return res.status(400).json({ error: 'That person could not be found, or their account is deactivated.' });
+  }
   const b = req.body || {};
   if (!b.description || !b.description.trim()) return res.status(400).json({ error: 'Please describe the activity.' });
   if (b.due_date && !isValidDate(b.due_date)) return res.status(400).json({ error: INVALID_DATE_MESSAGE });
@@ -236,15 +241,14 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   res.status(201).json({ commitment: await db.prepare('SELECT * FROM commitments WHERE id = ?').get(id) });
 }));
 
-/** POST /api/scrum/commitments/import — bulk-create ad-hoc tasks from the "Import CSV" button on Team
- *  Tasks. Each row assigns to one person by email; a Leader can only import tasks for people in their own
- *  reporting chain, same as the single Create Task form enforces via assertCanEdit above. Recurring tasks
- *  aren't supported here — Admin's Recurring Tasks import already covers that. */
+/** POST /api/scrum/commitments/import — bulk-create ad-hoc tasks from the Import button on My Tasks.
+ *  Each row assigns to one person by email — any active person, same as the single Create Task form
+ *  above. Recurring tasks aren't supported here — Admin's Recurring Tasks import already covers that. */
 router.post('/commitments/import', asyncHandler(async (req, res) => {
   if (isReadOnly(req.user)) return res.status(403).json({ error: 'Your role has read-only access.' });
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-  const users = await db.prepare('SELECT id, email FROM users').all();
-  const userByEmail = new Map(users.map((u) => [u.email.trim().toLowerCase(), u.id]));
+  const users = await db.prepare('SELECT id, email, is_active FROM users').all();
+  const userByEmail = new Map(users.map((u) => [u.email.trim().toLowerCase(), u]));
   // Active only, on every one of these four lookups — matching the single-create route's own checks
   // (below, and lines 131/147/152/157) so a bulk CSV import can't create a task against a Task Type,
   // Function, Process, or Activity that's been deactivated, something single-create already refuses.
@@ -263,11 +267,10 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
     try {
       const email = (r.employee_email || '').trim();
       if (!email) throw new Error('employee_email is required.');
-      const employeeId = userByEmail.get(email.toLowerCase());
-      if (!employeeId) throw new Error(`No user found with email "${email}".`);
-      if (!(await canActOnEmployee(req.user, employeeId))) {
-        throw new Error("You don't have permission to assign a task to this person.");
-      }
+      const person = userByEmail.get(email.toLowerCase());
+      if (!person) throw new Error(`No user found with email "${email}".`);
+      if (!person.is_active) throw new Error(`"${email}" belongs to a deactivated account.`);
+      const employeeId = person.id;
 
       const description = (r.description || '').trim();
       if (!description) throw new Error('description is required.');
@@ -304,7 +307,7 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       let reviewer_id = null;
       const reviewerEmail = (r.reviewer_email || '').trim();
       if (reviewerEmail) {
-        reviewer_id = userByEmail.get(reviewerEmail.toLowerCase());
+        reviewer_id = userByEmail.get(reviewerEmail.toLowerCase())?.id;
         if (!reviewer_id) throw new Error(`No user found with reviewer email "${reviewerEmail}".`);
       } else {
         reviewer_id = (await db.prepare('SELECT manager_id FROM users WHERE id = ?').get(employeeId))?.manager_id || null;
@@ -498,12 +501,12 @@ router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
 
 /** GET /api/scrum/commitments/:id/history — one task's full audit trail (created, status changes, due-date
  *  changes, deletion, etc.), for the "View History" popout on Team Tasks. Scoped by the same view rule as
- *  everything else — whoever can see the task (its owner, or someone above them in the hierarchy) can see
- *  its history; nobody else can. */
+ *  everything else — whoever can see the task (its owner, someone above them in the hierarchy, or the
+ *  person who created it for them) can see its history; nobody else can. */
 router.get('/commitments/:id/history', asyncHandler(async (req, res) => {
-  const commitment = await db.prepare('SELECT id, employee_id FROM commitments WHERE id = ?').get(req.params.id);
+  const commitment = await db.prepare('SELECT id, employee_id, created_by FROM commitments WHERE id = ?').get(req.params.id);
   if (!commitment) return res.status(404).json({ error: 'Task not found.' });
-  if (!(await assertCanView(req, res, commitment.employee_id))) return;
+  if (commitment.created_by !== req.user.id && !(await assertCanView(req, res, commitment.employee_id))) return;
   const logs = await db.prepare(`
     SELECT * FROM audit_logs WHERE table_name = 'commitments' AND record_id = ? ORDER BY changed_at DESC
   `).all(req.params.id);

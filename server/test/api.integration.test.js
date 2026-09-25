@@ -975,14 +975,18 @@ test('requests — once resolved, a second approve/reject attempt on the same re
   assert.equal(finalCommitment.due_date, '2099-02-02', 'the due date must reflect the one real approval, unaffected by the two refused re-attempts');
 });
 
-test('import — tasks: a valid row succeeds, an unknown email fails, and a Leader cannot import a task for someone outside their reporting chain', async () => {
+test('import — tasks: a valid row succeeds for anyone active, an unknown or deactivated email fails', async () => {
+  const inactiveId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, is_active) VALUES (?, 'Gone Person', 'gone@test.local', ?, 'employee', 0)`)
+    .run(inactiveId, bcrypt.hashSync('GonePass123', 10));
   const { body: midLeaderALogin } = await login('midleadera@test.local', 'MidLeadA123');
   const res = await fetch(`${baseUrl}/api/scrum/commitments/import`, {
     method: 'POST', headers: authed(midLeaderALogin.token),
     body: JSON.stringify({ rows: [
       { employee_email: 'reporta@test.local', description: 'Imported task for a direct report', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
       { employee_email: 'nobody-such@test.local', description: 'Should fail — unknown email', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
-      { employee_email: 'reportb@test.local', description: 'Should fail — outside Mid Leader A\'s chain', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
+      { employee_email: 'reportb@test.local', description: 'Imported for someone outside the chain', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
+      { employee_email: 'gone@test.local', description: 'Should fail — deactivated', category_name: 'Test Fixture Finance', main_task_name: 'Test Fixture FP&A', activity_name: 'Test Fixture Activity' },
     ] }),
   });
   assert.equal(res.status, 200);
@@ -990,12 +994,60 @@ test('import — tasks: a valid row succeeds, an unknown email fails, and a Lead
   assert.equal(results[0].success, true, 'importing a task for a direct report must succeed');
   assert.equal(results[1].success, false);
   assert.match(results[1].error, /no user found/i);
-  assert.equal(results[2].success, false, 'a Leader must not be able to import a task for someone outside their reporting chain');
-  assert.match(results[2].error, /permission/i);
+  assert.equal(results[2].success, true, 'anyone can be assigned a task — including someone outside the importer\'s reporting chain');
+  assert.equal(results[3].success, false, 'a deactivated person cannot be assigned a task');
+  assert.match(results[3].error, /deactivated/i);
 
   const created = await db.prepare(`SELECT * FROM commitments WHERE employee_id = ? AND description = ?`).get(ids.reportAId, 'Imported task for a direct report');
   assert.ok(created, 'the successful row must have actually created a commitment');
   assert.equal(created.type, 'adhoc');
+});
+
+test('assigning — anyone can give a task to anyone; it then belongs to them, and the creator can only view it', async () => {
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const asA = authed(reportALogin.token);
+
+  const people = await fetch(`${baseUrl}/api/users/assignable`, { headers: asA });
+  assert.equal(people.status, 200, 'an Employee can load the people list');
+  const { users } = await people.json();
+  assert.ok(users.some((u) => u.id === ids.reportBId) && users.some((u) => u.id === ids.topLeaderId), 'including people outside their own chain');
+  assert.ok(users.every((u) => Object.keys(u).sort().join() === 'email,full_name,id,manager_id,role'), 'only what the Assign to / Reviewer boxes need — no password hash or account details');
+
+  const create = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: asA,
+    body: JSON.stringify({ description: 'Assigned across teams', type: 'adhoc', due_date: today(), employee_id: ids.reportBId, category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId }),
+  });
+  assert.equal(create.status, 201, 'an Employee can assign a task to someone outside their reporting chain');
+  const { commitment } = await create.json();
+  assert.equal(commitment.employee_id, ids.reportBId);
+  assert.equal(commitment.created_by, ids.reportAId);
+
+  const move = (headers) => fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/carry-forward`, { method: 'POST', headers, body: JSON.stringify({ new_due_date: daysAgo(-5) }) });
+  assert.equal((await move(asA)).status, 403, 'the creator cannot change a task that now belongs to someone else');
+  const resolve = await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/resolve`, { method: 'POST', headers: asA, body: JSON.stringify({ status: 'completed' }) });
+  assert.equal(resolve.status, 403);
+
+  const team = await (await fetch(`${baseUrl}/api/leader/org-tasks`, { headers: asA })).json();
+  const seen = team.tasks.find((t) => t.id === commitment.id);
+  assert.ok(seen, 'the creator still sees the task they assigned in Team Tasks');
+  assert.equal(seen.can_act, 0, 'read-only for them');
+  assert.equal((await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/history`, { headers: asA })).status, 200, 'and can open its history');
+
+  const { body: outsiderLogin } = await login('employee@test.local', 'EmpPass123');
+  assert.equal((await fetch(`${baseUrl}/api/scrum/commitments/${commitment.id}/history`, { headers: authed(outsiderLogin.token) })).status, 403, 'someone unrelated still cannot see it');
+  const outsiderTeam = await (await fetch(`${baseUrl}/api/leader/org-tasks`, { headers: authed(outsiderLogin.token) })).json();
+  assert.ok(!outsiderTeam.tasks.some((t) => t.id === commitment.id));
+
+  const { body: reportBLogin } = await login('reportb@test.local', 'ReportB123');
+  assert.equal((await move(authed(reportBLogin.token))).status, 200, 'the person it was assigned to can update it');
+
+  const goneId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role, is_active) VALUES (?, 'Left Already', 'leftalready@test.local', ?, 'employee', 0)`).run(goneId, bcrypt.hashSync('LeftPass123', 10));
+  const toInactive = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers: asA,
+    body: JSON.stringify({ description: 'For a deactivated person', type: 'adhoc', due_date: today(), employee_id: goneId, category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId }),
+  });
+  assert.equal(toInactive.status, 400, 'a deactivated person cannot be assigned a task');
 });
 
 // The single-create routes for Process/Activity/Task all refuse an inactive parent with a friendly error

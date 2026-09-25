@@ -1,7 +1,6 @@
 // Dropdown choices for each import template (see lib/excelTemplate.js and components/ImportButton.jsx),
 // fetched fresh when the template is downloaded. Each list loads on its own: if one can't be fetched
-// (e.g. an Employee isn't allowed to list other people), the template still downloads, just without that
-// dropdown — or, for people, with only the current user.
+// the template still downloads, just without that dropdown — or, for people, with only the current user.
 import { api } from './api';
 
 const PRIORITIES = ['Low', 'Medium', 'High'];
@@ -14,7 +13,7 @@ const safe = (promise, fallback) => promise.catch(() => fallback);
 
 async function catalogue() {
   const [users, taskTypes, mainTasks, activities] = await Promise.all([
-    safe(api.get('/users').then((d) => d.users), null),
+    safe(api.get('/users/assignable').then((d) => d.users), null), // active people only, any role can read it
     safe(api.get('/task-types').then((d) => d.task_types), []),
     safe(api.get('/main-tasks').then((d) => d.main_tasks), []),
     safe(api.get('/task-activities').then((d) => d.task_activities), []),
@@ -22,7 +21,7 @@ async function catalogue() {
   const activeProcesses = mainTasks.filter((m) => m.is_active);
   const processName = new Map(activeProcesses.map((m) => [m.id, m.name]));
   return {
-    users: users?.filter((u) => u.is_active) ?? null,
+    users,
     taskTypes: taskTypes.filter((t) => t.is_active),
     processes: activeProcesses.map((m) => m.name),
     // [Process, Activity] — for the Activity dropdown that only shows the chosen Process's activities.

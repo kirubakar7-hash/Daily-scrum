@@ -59,6 +59,16 @@ router.get('/', requireRole('super_admin', 'admin', 'leader', 'senior_management
   res.json({ users: rows.map(sanitize) });
 }));
 
+/** GET /api/users/assignable — everyone a task can be assigned to, for every signed-in role: any active
+ *  person can be given a task by anyone. Just what the "Assign to" and "Reviewer" boxes need — no team,
+ *  job title or account details — since this is open to Employees too. */
+router.get('/assignable', asyncHandler(async (req, res) => {
+  const rows = await db.prepare(`
+    SELECT id, full_name, email, role, manager_id FROM users WHERE is_active = 1 ORDER BY full_name
+  `).all();
+  res.json({ users: rows });
+}));
+
 router.post('/', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const { full_name, email, password, role, team_id, manager_id, job_title } = req.body || {};
   if (!full_name || !email || !password || !role) {

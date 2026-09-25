@@ -19,9 +19,12 @@ async function allActiveUsers() {
 // approve/reject action, replacing the old standalone Requests tab. A task can technically accumulate more
 // than one pending request over its life (support now, a due-date change later) — the correlated subquery
 // picks only the single most recent one, which is the one actually worth surfacing in a list view.
-async function openTasksForEmployees(ids, date) {
-  if (ids.length === 0) return [];
-  const clause = ids.map(() => '?').join(',');
+/** Open tasks for these people — plus, when `createdBy` is given, the open tasks that person created for
+ *  anyone else (anyone can assign a task to anyone, and should still be able to see what they assigned). */
+async function openTasksForEmployees(ids, date, createdBy = null) {
+  if (ids.length === 0 && !createdBy) return [];
+  const clause = ids.length ? `c.employee_id IN (${ids.map(() => '?').join(',')})` : 'FALSE';
+  const whose = createdBy ? `(${clause} OR c.created_by = ?)` : clause;
   // Once a task is Completed it no longer needs anyone's attention here — it drops off this list
   // (still fully visible in History, nothing is hidden from the record, just from this working view).
   const rows = await db.prepare(`
@@ -38,9 +41,9 @@ async function openTasksForEmployees(ids, date) {
     LEFT JOIN requests pr ON pr.id = (
       SELECT id FROM requests WHERE commitment_id = c.id AND status = 'pending' ORDER BY created_at DESC LIMIT 1
     )
-    WHERE c.employee_id IN (${clause}) AND c.is_active = 1 AND c.status != 'completed'
+    WHERE ${whose} AND c.is_active = 1 AND c.status != 'completed'
     ORDER BY c.due_date, c.created_at DESC
-  `).all(...ids);
+  `).all(...ids, ...(createdBy ? [createdBy] : []));
   return rows.map((r) => withDelay(r, date));
 }
 
@@ -65,7 +68,8 @@ router.get('/org-tasks', asyncHandler(async (req, res) => {
   // Precomputed once, not per row — canActOnEmployee's leader branch would otherwise re-run the same
   // recursive query for every task on the page.
   const actionable = wideOpen ? null : new Set(await visibleEmployeeIds(req.user));
-  const tasks = (await openTasksForEmployees(ids, date)).map((r) => ({
+  // A task someone assigned outside their own view shows here read-only (can_act stays 0 below).
+  const tasks = (await openTasksForEmployees(ids, date, wideOpen ? null : req.user.id)).map((r) => ({
     ...r, can_act: !isReadOnly(req.user) && (wideOpen || actionable.has(r.employee_id)) ? 1 : 0,
   }));
   res.json({ date, tasks });

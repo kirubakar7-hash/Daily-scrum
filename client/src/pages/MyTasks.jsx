@@ -5,22 +5,20 @@ import { useAuth } from '../lib/AuthContext';
 import { Card } from '../components/ui';
 import TeamTaskList from '../components/TeamTaskList';
 
-const LEADER_TIER = ['leader', 'admin', 'super_admin'];
-
-/** Everyone's personal task list — create your own work, update your own status, request support or a
- *  due-date change. A Leader can also assign a new task to anyone here (not just themselves), matching
- *  the same org-wide "Assign to" list Team Tasks uses. */
+/** Everyone's personal task list — create work, update your own status, request support or a due-date
+ *  change. Anyone can assign a new task to any active person ("Assign to"); once created it belongs to
+ *  them, and the creator can follow it (read-only) in Team Tasks. */
 export default function MyTasks() {
   const { user } = useAuth();
   const readOnly = user.role === 'senior_management';
   const [assignees, setAssignees] = useState([{ employee_id: user.id, full_name: 'You' }]);
 
   useEffect(() => {
-    if (!LEADER_TIER.includes(user.role)) return;
-    api.get('/users').then((d) => {
-      setAssignees(d.users.filter((u) => u.is_active).map((u) => ({ employee_id: u.id, full_name: u.id === user.id ? 'You' : u.full_name })));
+    if (readOnly) return;
+    api.get('/users/assignable').then((d) => {
+      setAssignees(d.users.map((u) => ({ employee_id: u.id, full_name: u.id === user.id ? 'You' : u.full_name })));
     }).catch(() => {});
-  }, [user.id, user.role]);
+  }, [user.id, readOnly]);
 
   return (
     <div className="space-y-3">
