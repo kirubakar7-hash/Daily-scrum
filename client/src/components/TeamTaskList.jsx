@@ -509,16 +509,33 @@ function quickPickDates() {
   ];
 }
 
+// A browser date box reports a new value the moment ANY part of it changes — typing the "2" of "25"
+// already reads as the 2nd, and typing a year digit by digit passes through years like 0002. So the cell
+// keeps what's typed as a draft and only saves on Enter, the Save button, or leaving the box with a
+// complete date; the quick picks still save in one click.
+const isCompleteDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '') && Number(v.slice(0, 4)) >= 2000 && Number(v.slice(0, 4)) <= 2100;
+
 function DueDateCell({ task, onChanged }) {
   const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [justSaved, setJustSaved] = useState(false);
   const changed = wasChanged(task);
 
+  function startEditing() {
+    setDraft(task.due_date || '');
+    setError('');
+    setEditing(true);
+  }
+
   async function save(newDate) {
+    if (!isCompleteDate(newDate)) {
+      setError('Enter the full date, including a 4-digit year.');
+      return;
+    }
     setEditing(false);
-    if (!newDate || newDate === task.due_date) return;
+    if (newDate === task.due_date) return;
     setSaving(true);
     setError('');
     try {
@@ -536,15 +553,34 @@ function DueDateCell({ task, onChanged }) {
   if (editing) {
     return (
       <div className="space-y-1.5 animate-scale-in">
-        <input
-          type="date"
-          autoFocus
-          defaultValue={task.due_date}
-          disabled={saving}
-          onChange={(e) => save(e.target.value)}
-          onBlur={() => setEditing(false)}
-          className="text-xs border border-grey-300 rounded-lg px-2 py-1.5 min-h-[36px] focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
-        />
+        <div className="flex items-center gap-1">
+          <input
+            type="date"
+            autoFocus
+            value={draft}
+            min="2000-01-01"
+            max="2100-12-31"
+            disabled={saving}
+            onChange={(e) => { setDraft(e.target.value); setError(''); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); save(draft); }
+              if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+            }}
+            // Leaving the box keeps a finished date (e.g. one picked from the calendar) and drops an
+            // unfinished one, rather than saving half a date.
+            onBlur={() => { if (isCompleteDate(draft) && draft !== task.due_date) save(draft); else setEditing(false); }}
+            className="text-xs border border-grey-300 rounded-lg px-2 py-1.5 min-h-[36px] focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500"
+          />
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => save(draft)}
+            className="inline-flex items-center gap-1 text-xs font-semibold bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-2.5 py-1.5 min-h-[36px] transition-colors"
+          >
+            <Check className="w-3.5 h-3.5" /> Save
+          </button>
+        </div>
+        {error && <div className="text-accent-600 text-xs">{error}</div>}
         <div className="flex flex-wrap gap-1">
           {quickPickDates().map(([label, date]) => (
             <button
@@ -566,7 +602,7 @@ function DueDateCell({ task, onChanged }) {
     <div>
       <button
         type="button"
-        onClick={() => setEditing(true)}
+        onClick={startEditing}
         disabled={saving}
         className={`inline-flex items-center gap-1 text-left hover:underline decoration-dotted py-1.5 sm:py-0 min-h-[36px] sm:min-h-0 transition-colors ${changed ? 'text-amber-700 font-semibold' : 'text-grey-700 hover:text-brand-700'}`}
         title={changed ? `Originally due ${task.original_due_date} — click to change again` : 'Click to change the due date'}

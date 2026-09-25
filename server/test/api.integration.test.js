@@ -1671,6 +1671,36 @@ test('recurring list — every series carries its parsed schedule, including old
   assert.ok(rows.every((r) => Number.isInteger(r.task_count)));
 });
 
+test('due dates — a half-typed or impossible date is refused everywhere a due date is set; a real one saves', async () => {
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const headers = authed(reportALogin.token);
+  const taskId = uuid();
+  await db.prepare(`INSERT INTO commitments (id, employee_id, scrum_date, description, type, priority, due_date, original_due_date, start_date, created_by, updated_by)
+    VALUES (?, ?, ?, 'Date change check', 'adhoc', 'Medium', ?, ?, ?, ?, ?)`).run(taskId, ids.reportAId, today(), today(), today(), today(), ids.reportAId, ids.reportAId);
+  const move = (date) => fetch(`${baseUrl}/api/scrum/commitments/${taskId}/carry-forward`, { method: 'POST', headers, body: JSON.stringify({ new_due_date: date }) });
+
+  for (const bad of ['0002-09-25', '2026-02-31', '2026-13-01', '26-09-30', 'tomorrow', '2026-9-30', '3026-01-01']) {
+    const res = await move(bad);
+    assert.equal(res.status, 400, `"${bad}" must be refused`);
+    assert.match((await res.json()).error, /real date/);
+  }
+  assert.equal((await db.prepare('SELECT due_date FROM commitments WHERE id = ?').get(taskId)).due_date, today(), 'nothing refused was saved');
+
+  const ok = await move('2026-10-15');
+  assert.equal(ok.status, 200);
+  assert.equal((await db.prepare('SELECT due_date FROM commitments WHERE id = ?').get(taskId)).due_date, '2026-10-15');
+  assert.equal((await move('2028-02-29')).status, 200, 'a leap day is a real date');
+
+  const request = await fetch(`${baseUrl}/api/scrum/commitments/${taskId}/request-due-date-change`, { method: 'POST', headers, body: JSON.stringify({ requested_due_date: '0002-10-20', reason: 'test' }) });
+  assert.equal(request.status, 400, 'a date-change request with a half-typed date is refused');
+
+  const create = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers,
+    body: JSON.stringify({ description: 'Bad date task', type: 'adhoc', due_date: '2026-02-30', employee_id: ids.reportAId, category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId }),
+  });
+  assert.equal(create.status, 400, 'a new task with an impossible due date is refused');
+});
+
 // The completion-triggered path (an employee marking today's occurrence done, via POST .../resolve) is a
 // second way a recurring series advances, alongside the schedule-triggered sweep tested above — it had no
 // integration test at all before this.

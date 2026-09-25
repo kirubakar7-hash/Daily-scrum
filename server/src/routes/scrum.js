@@ -9,6 +9,7 @@ import { firstDueDate, nextOccurrence, describeRule, validateRule, legacyFrequen
 import { insertOccurrence } from '../lib/recurringOccurrences.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { resolveDefaultCategoryId } from '../lib/masterData.js';
+import { isValidDate, INVALID_DATE_MESSAGE } from '../lib/validDate.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -124,6 +125,7 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   if (!(await assertEmployeeExists(res, employeeId))) return;
   const b = req.body || {};
   if (!b.description || !b.description.trim()) return res.status(400).json({ error: 'Please describe the activity.' });
+  if (b.due_date && !isValidDate(b.due_date)) return res.status(400).json({ error: INVALID_DATE_MESSAGE });
 
   // Type can arrive either as a task_type_id (from the admin-managed Type list) or, for backward
   // compatibility, the raw mechanic directly — either way it resolves to the same 'recurring'/'adhoc' split
@@ -312,6 +314,7 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       if (!['Low', 'Medium', 'High'].includes(priority)) throw new Error('priority must be Low, Medium, or High.');
 
       const dueDate = (r.due_date || '').trim() || today();
+      if (!isValidDate(dueDate)) throw new Error(`due_date "${dueDate}" isn't a real date — use YYYY-MM-DD, e.g. 2026-09-30.`);
 
       const id = uuid();
       await db.prepare(`
@@ -343,6 +346,7 @@ router.post('/commitments/:id/carry-forward', asyncHandler(async (req, res) => {
 
   const newDueDate = req.body?.new_due_date;
   if (!newDueDate) return res.status(400).json({ error: 'Please choose when you expect to complete this.' });
+  if (!isValidDate(newDueDate)) return res.status(400).json({ error: INVALID_DATE_MESSAGE });
 
   // Only reset a Completed/Support Required task back to Pending — an In Progress (or already Pending)
   // task keeps its current status; moving its date shouldn't silently undo real progress.
@@ -370,6 +374,7 @@ router.post('/commitments/:id/request-due-date-change', asyncHandler(async (req,
 
   const requestedDate = req.body?.requested_due_date;
   if (!requestedDate) return res.status(400).json({ error: "Please choose the date you're requesting." });
+  if (!isValidDate(requestedDate)) return res.status(400).json({ error: INVALID_DATE_MESSAGE });
   if (requestedDate === before.due_date) {
     return res.status(400).json({ error: "That's already this task's due date — choose a different one." });
   }
