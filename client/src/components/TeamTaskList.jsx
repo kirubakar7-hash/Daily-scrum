@@ -513,7 +513,7 @@ function quickPickDates() {
 // A browser date box reports a new value the moment ANY part of it changes — typing the "2" of "25"
 // already reads as the 2nd, and typing a year digit by digit passes through years like 0002. So the cell
 // keeps what's typed as a draft and only saves on Enter, the Save button, or leaving the box with a
-// complete date; the quick picks still save in one click.
+// complete date.
 const isCompleteDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '') && Number(v.slice(0, 4)) >= 2000 && Number(v.slice(0, 4)) <= 2100;
 
 function DueDateCell({ task, onChanged }) {
@@ -582,19 +582,6 @@ function DueDateCell({ task, onChanged }) {
           </button>
         </div>
         {error && <div className="text-accent-600 text-xs">{error}</div>}
-        <div className="flex flex-wrap gap-1">
-          {quickPickDates().map(([label, date]) => (
-            <button
-              key={label}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => save(date)}
-              className="text-xs bg-grey-100 hover:bg-brand-100 hover:text-brand-700 text-grey-700 rounded-full px-2.5 py-1.5 min-h-[32px] transition-colors"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
     );
   }
