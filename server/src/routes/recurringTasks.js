@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, today } from '../db.js';
-import { requireAuth, requireRole } from '../middleware/auth.js';
+import { requireAuth, requireRole, TASK_ROLES_SQL } from '../middleware/auth.js';
 import { recordAudit } from '../lib/audit.js';
 import { describeRule, validateRule, legacyFrequencyToRule, firstDueDate, parseRule } from '../lib/recurrence.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
@@ -94,8 +94,8 @@ async function createRecurringTask(b, req) {
   const created = await db.transaction(async () => {
     const rows = [];
     for (const employeeId of b.employee_ids) {
-      // Employees and Leaders both carry their own tasks (the form offers both, and Edit accepts both).
-      const employee = await db.prepare("SELECT id, full_name, manager_id FROM users WHERE id = ? AND is_active = 1 AND role IN ('employee', 'leader')").get(employeeId);
+      // Anyone who works on tasks can have a recurring one — Admins and Super Admins included.
+      const employee = await db.prepare(`SELECT id, full_name, manager_id FROM users WHERE id = ? AND is_active = 1 AND ${TASK_ROLES_SQL}`).get(employeeId);
       if (!employee) continue; // skip silently — a deactivated/removed person shouldn't block the rest of the assignment
       const reviewerId = explicitReviewerId !== undefined ? explicitReviewerId : (employee.manager_id || null);
 
@@ -244,7 +244,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     updates.title = title;
   }
   if (has('employee_id')) {
-    const employee = await db.prepare(`SELECT id FROM users WHERE id = ? AND is_active = 1 AND role IN ('employee', 'leader')`).get(b.employee_id);
+    const employee = await db.prepare(`SELECT id FROM users WHERE id = ? AND is_active = 1 AND ${TASK_ROLES_SQL}`).get(b.employee_id);
     if (!employee) return bad('That person is no longer available. Choose someone else.');
     updates.employee_id = employee.id;
   }

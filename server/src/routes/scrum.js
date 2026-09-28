@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, today } from '../db.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, TASK_ROLES, TASK_ROLES_SQL } from '../middleware/auth.js';
 import { recordAudit, auditDiff } from '../lib/audit.js';
 import { canViewEmployee, canActOnEmployee, isReadOnly } from '../lib/scope.js';
 import { withDelay, withLateness } from '../lib/delay.js';
@@ -125,8 +125,8 @@ router.post('/commitments', asyncHandler(async (req, res) => {
   // exists, the task is the assignee's: only they, their managers and Admins can change it — every
   // other route below still goes through assertCanEdit. The creator can view it (canViewTask).
   if (isReadOnly(req.user)) return res.status(403).json({ error: 'Your role has read-only access.' });
-  if (!(await db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(employeeId))) {
-    return res.status(400).json({ error: 'That person could not be found, or their account is deactivated.' });
+  if (!(await db.prepare(`SELECT id FROM users WHERE id = ? AND is_active = 1 AND ${TASK_ROLES_SQL}`).get(employeeId))) {
+    return res.status(400).json({ error: "That person can't be given tasks — their account is deactivated or read-only." });
   }
   const b = req.body || {};
   if (!b.description || !b.description.trim()) return res.status(400).json({ error: 'Please describe the activity.' });
@@ -247,7 +247,7 @@ router.post('/commitments', asyncHandler(async (req, res) => {
 router.post('/commitments/import', asyncHandler(async (req, res) => {
   if (isReadOnly(req.user)) return res.status(403).json({ error: 'Your role has read-only access.' });
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-  const users = await db.prepare('SELECT id, email, is_active FROM users').all();
+  const users = await db.prepare('SELECT id, email, is_active, role FROM users').all();
   const userByEmail = new Map(users.map((u) => [u.email.trim().toLowerCase(), u]));
   // Active only, on every one of these four lookups — matching the single-create route's own checks
   // (below, and lines 131/147/152/157) so a bulk CSV import can't create a task against a Task Type,
@@ -270,6 +270,7 @@ router.post('/commitments/import', asyncHandler(async (req, res) => {
       const person = userByEmail.get(email.toLowerCase());
       if (!person) throw new Error(`No user found with email "${email}".`);
       if (!person.is_active) throw new Error(`"${email}" belongs to a deactivated account.`);
+      if (!TASK_ROLES.includes(person.role)) throw new Error(`"${email}" has a read-only role and can't be given tasks.`);
       const employeeId = person.id;
 
       const description = (r.description || '').trim();
@@ -539,7 +540,7 @@ router.patch('/commitments/:id', asyncHandler(async (req, res) => {
   // effects (advancing a recurring series, creating a support request) a bare status write here would skip.
   if (['admin', 'super_admin'].includes(req.user.role)) {
     if (req.body?.employee_id !== undefined && req.body.employee_id !== before.employee_id) {
-      const chosenEmployee = await db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(req.body.employee_id);
+      const chosenEmployee = await db.prepare(`SELECT id FROM users WHERE id = ? AND is_active = 1 AND ${TASK_ROLES_SQL}`).get(req.body.employee_id);
       if (!chosenEmployee) return res.status(400).json({ error: 'That person is no longer available. Choose another.' });
       after.employee_id = req.body.employee_id;
     }

@@ -1050,6 +1050,33 @@ test('assigning — anyone can give a task to anyone; it then belongs to them, a
   assert.equal(toInactive.status, 400, 'a deactivated person cannot be assigned a task');
 });
 
+test('assigning — Admins and Super Admins can be given recurring tasks; read-only Senior Management cannot be given any task', async () => {
+  const { body: adminLogin } = await login('admin@test.local', 'AdminPass123');
+  const headers = authed(adminLogin.token);
+  const base = { category_id: ids.fixtureCategoryId, main_task_id: ids.fixtureMainTaskId, task_activity_id: ids.fixtureActivityId };
+
+  const recurring = await fetch(`${baseUrl}/api/recurring-tasks`, {
+    method: 'POST', headers, body: JSON.stringify({ ...base, title: 'Admin-owned recurring task', employee_ids: [ids.adminId, ids.superAdminId] }),
+  });
+  assert.equal(recurring.status, 201, 'an Admin and a Super Admin can each be given a recurring task');
+  assert.deepEqual((await recurring.json()).recurring_tasks.map((s) => s.employee_id).sort(), [ids.adminId, ids.superAdminId].sort());
+
+  const smId = uuid();
+  await db.prepare(`INSERT INTO users (id, full_name, email, password_hash, role) VALUES (?, 'Board Viewer', 'board@test.local', ?, 'senior_management')`).run(smId, bcrypt.hashSync('BoardPass123', 10));
+  const people = (await (await fetch(`${baseUrl}/api/users/assignable`, { headers })).json()).users;
+  assert.ok(people.some((u) => u.id === ids.adminId), 'Admins are offered in Assign to');
+  assert.ok(!people.some((u) => u.id === smId), 'read-only Senior Management is not offered');
+
+  const adhoc = await fetch(`${baseUrl}/api/scrum/commitments`, {
+    method: 'POST', headers, body: JSON.stringify({ ...base, description: 'For a viewer', type: 'adhoc', due_date: today(), employee_id: smId }),
+  });
+  assert.equal(adhoc.status, 400, 'a task for a read-only viewer is refused — they could never update it');
+  const recurringForViewer = await fetch(`${baseUrl}/api/recurring-tasks`, {
+    method: 'POST', headers, body: JSON.stringify({ ...base, title: 'Viewer recurring', employee_ids: [smId] }),
+  });
+  assert.equal(recurringForViewer.status, 400);
+});
+
 // The single-create routes for Process/Activity/Task all refuse an inactive parent with a friendly error
 // — the CSV import routes resolved names against an unfiltered (active-and-inactive) list and inserted
 // straight through with no re-check, silently bypassing that rule. These confirm the fix on all three.

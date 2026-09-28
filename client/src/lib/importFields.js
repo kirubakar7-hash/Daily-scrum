@@ -50,7 +50,7 @@ export async function taskImportFields(currentUser) {
 /** Admin → Recurring Tasks → Import. */
 export async function recurringImportFields() {
   const c = await catalogue();
-  const people = c.users ? byName(c.users.filter((u) => ['employee', 'leader'].includes(u.role))).map((u) => u.email) : [];
+  const people = c.users ? byName(c.users).map((u) => u.email) : []; // everyone who can be given tasks
   const reviewers = c.users ? byName(c.users.filter((u) => LEADER_ROLES.includes(u.role))).map((u) => u.email) : [];
   return {
     employee_emails: { options: people, multiple: true, hint: 'Pick one person, or type several emails separated by ;' },

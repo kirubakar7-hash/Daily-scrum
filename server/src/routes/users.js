@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
 import { db } from '../db.js';
-import { requireAuth, requireRole, ROLE_LABELS } from '../middleware/auth.js';
+import { requireAuth, requireRole, ROLE_LABELS, TASK_ROLES_SQL } from '../middleware/auth.js';
 import { recordAudit, auditDiff } from '../lib/audit.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { visibleEmployeeIds, subordinateIds } from '../lib/scope.js';
@@ -64,7 +64,7 @@ router.get('/', requireRole('super_admin', 'admin', 'leader', 'senior_management
  *  job title or account details — since this is open to Employees too. */
 router.get('/assignable', asyncHandler(async (req, res) => {
   const rows = await db.prepare(`
-    SELECT id, full_name, email, role, manager_id FROM users WHERE is_active = 1 ORDER BY full_name
+    SELECT id, full_name, email, role, manager_id FROM users WHERE is_active = 1 AND ${TASK_ROLES_SQL} ORDER BY full_name
   `).all();
   res.json({ users: rows });
 }));

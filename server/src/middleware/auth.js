@@ -53,3 +53,8 @@ export const ROLE_LABELS = {
   employee: 'Employee',
   senior_management: 'Senior Management',
 };
+
+/** Roles that can be given tasks — ad-hoc or recurring. Senior Management is read-only, so a task
+ *  assigned to them could never be updated or closed by them. */
+export const TASK_ROLES = ['employee', 'leader', 'admin', 'super_admin'];
+export const TASK_ROLES_SQL = `role IN (${TASK_ROLES.map((r) => `'${r}'`).join(', ')})`;

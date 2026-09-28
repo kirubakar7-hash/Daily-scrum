@@ -33,6 +33,8 @@ const NAME_INPUT = 'w-full font-semibold text-grey-800 border border-transparent
 const TEXT_INPUT = 'w-full text-grey-500 border border-transparent hover:border-grey-200 focus:border-brand-500 rounded-lg px-1.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40';
 const SMALL_INPUT = 'w-full border border-grey-200 rounded-lg px-1.5 py-1 text-xs text-grey-700 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500 disabled:bg-grey-50 disabled:text-grey-400';
 const SMALL_SELECT = 'w-full border border-grey-200 rounded-lg px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500';
+// Who can be given tasks (matches the server's TASK_ROLES) — Senior Management is read-only.
+const TASK_ROLES = ['employee', 'leader', 'admin', 'super_admin'];
 const LINK_BUTTON = 'text-xs font-medium text-brand-600 hover:text-brand-800 transition-colors';
 
 /** An inline-edit text cell: saves on blur when changed; `required` restores the old value if cleared. */
@@ -1202,7 +1204,7 @@ function RecurringTasksTab() {
     }).catch(() => {});
     api.get('/main-tasks').then((d) => setMainTasks(d.main_tasks.filter((m) => m.is_active))).catch(() => {});
     api.get('/task-activities').then((d) => setTaskActivities(d.task_activities.filter((a) => a.is_active))).catch(() => {});
-    api.get('/users').then((d) => { setAllUsers(d.users); setEmployees(d.users.filter((u) => ['employee', 'leader'].includes(u.role) && u.is_active)); }).catch(() => {});
+    api.get('/users').then((d) => { setAllUsers(d.users); setEmployees(d.users.filter((u) => TASK_ROLES.includes(u.role) && u.is_active)); }).catch(() => {});
   }
   useEffect(() => { load(); }, []);
 
