@@ -1780,6 +1780,35 @@ test('due dates — a half-typed or impossible date is refused everywhere a due 
   assert.equal(create.status, 400, 'a new task with an impossible due date is refused');
 });
 
+test('recurring due dates — a task can be moved onto a day its series already has a task on', async () => {
+  // A daily series with open tasks for 3 days ago, 2 days ago and yesterday (none done) — exactly what the
+  // scheduler leaves behind when nobody completes them.
+  const { activityId, commitmentId: oldest } = await seedRecurringSeries({ rule: { interval: 1, unit: 'day', end: { type: 'never' } }, lastDueDate: daysAgo(3) });
+  const activity = await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(activityId);
+  const template = { description: 'Daily status update', employee_id: ids.reportAId, priority: 'Medium' };
+  await insertOccurrence({ activity, dueDate: daysAgo(2), template, changedBy: null, changedByName: 'test', reason: 'test' });
+  await insertOccurrence({ activity: await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(activityId), dueDate: daysAgo(1), template, changedBy: null, changedByName: 'test', reason: 'test' });
+
+  const { body: reportALogin } = await login('reporta@test.local', 'ReportA123');
+  const move = (date) => fetch(`${baseUrl}/api/scrum/commitments/${oldest}/carry-forward`, { method: 'POST', headers: authed(reportALogin.token), body: JSON.stringify({ new_due_date: date }) });
+
+  const ontoSibling = await move(daysAgo(1));
+  assert.equal(ontoSibling.status, 200, 'moving it onto a day another task of the same series is due must work, not fail with a server error');
+  const moved = await db.prepare('SELECT due_date, original_due_date FROM commitments WHERE id = ?').get(oldest);
+  assert.equal(moved.due_date, daysAgo(1));
+  assert.equal(moved.original_due_date, daysAgo(3), 'its scheduled date is kept');
+  assert.equal((await move(daysAgo(2))).status, 200, 'and onto the other one too');
+
+  // The duplicate protection still holds for the schedule itself: the same scheduled day can't be created twice.
+  const fresh = await db.prepare('SELECT * FROM recurring_activities WHERE id = ?').get(activityId);
+  const [a, b] = await Promise.all([
+    insertOccurrence({ activity: fresh, dueDate: today(), template, changedBy: null, changedByName: 'race A', reason: 'test' }),
+    insertOccurrence({ activity: fresh, dueDate: today(), template, changedBy: null, changedByName: 'race B', reason: 'test' }),
+  ]);
+  assert.equal(a.id, b.id);
+  assert.equal((await db.prepare('SELECT COUNT(*) c FROM commitments WHERE recurring_activity_id = ? AND original_due_date = ?').get(activityId, today())).c, 1);
+});
+
 // The completion-triggered path (an employee marking today's occurrence done, via POST .../resolve) is a
 // second way a recurring series advances, alongside the schedule-triggered sweep tested above — it had no
 // integration test at all before this.

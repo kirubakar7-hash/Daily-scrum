@@ -13,9 +13,9 @@ import { recordAudit } from './audit.js';
  *  check and this insert aren't atomic across two separate connections, so two overlapping calls (a
  *  retried/double-fired cron invocation, or the sweep racing an employee's completion at the same moment)
  *  can both pass their check and both land here for the same (activity, dueDate). idx_commitments_recurring_
- *  due_unique (001_schema.sql) is the real guarantee against a duplicate row, not the pre-checks — a
- *  unique-violation here means someone else just won that race, so this returns their row instead of
- *  erroring or silently creating a second one. */
+ *  slot_unique (001_schema.sql) — one task per series per SCHEDULED date (original_due_date) — is the real
+ *  guarantee against a duplicate row, not the pre-checks: a unique-violation here means someone else just
+ *  won that race, so this returns their row instead of erroring or silently creating a second one. */
 export async function insertOccurrence({ activity, dueDate, template: previous, changedBy, changedByName, reason }) {
   // The series row is the source of truth for what Admin → Recurring Tasks → Edit can change: who it's
   // for, its name, priority and reviewer always come from there, so an edit shows up from the next task
@@ -50,7 +50,7 @@ export async function insertOccurrence({ activity, dueDate, template: previous, 
     });
   } catch (e) {
     if (e.code === '23505') {
-      const existing = await db.prepare('SELECT * FROM commitments WHERE recurring_activity_id = ? AND due_date = ? AND is_active = 1').get(activity.id, dueDate);
+      const existing = await db.prepare('SELECT * FROM commitments WHERE recurring_activity_id = ? AND original_due_date = ? AND is_active = 1').get(activity.id, dueDate);
       if (existing) return existing;
     }
     throw e;

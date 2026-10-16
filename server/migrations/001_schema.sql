@@ -282,8 +282,12 @@ CREATE INDEX IF NOT EXISTS idx_commitments_recurring_activity ON commitments(rec
 -- level check, since that check and the insert aren't atomic across two separate connections. This index
 -- is the actual guarantee against a duplicate occurrence, not the application check, which is only a
 -- fast path. Partial (recurring_activity_id IS NOT NULL) — adhoc tasks never populate that column at all.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_recurring_due_unique
-  ON commitments(recurring_activity_id, due_date)
+-- Keyed on original_due_date — the date the schedule created the occurrence for, which never changes —
+-- not due_date: people move due dates, and a moved task landing on a day its series already has (a daily
+-- series' tasks pile up when nobody completes them) is fine, not a duplicate.
+DROP INDEX IF EXISTS idx_commitments_recurring_due_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_recurring_slot_unique
+  ON commitments(recurring_activity_id, original_due_date)
   WHERE recurring_activity_id IS NOT NULL AND is_active = 1;
 CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);
 CREATE INDEX IF NOT EXISTS idx_users_manager ON users(manager_id);

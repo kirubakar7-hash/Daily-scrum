@@ -483,7 +483,7 @@ router.post('/commitments/:id/resolve', asyncHandler(async (req, res) => {
         await db.prepare('UPDATE recurring_activities SET is_active = 0 WHERE id = ?').run(activity.id);
         seriesEnded = true;
       } else {
-        const already = await db.prepare(`SELECT * FROM commitments WHERE recurring_activity_id = ? AND due_date = ? AND is_active = 1`).get(activity.id, nextDate);
+        const already = await db.prepare(`SELECT * FROM commitments WHERE recurring_activity_id = ? AND original_due_date = ? AND is_active = 1`).get(activity.id, nextDate);
         if (already) {
           nextTask = already;
         } else {
